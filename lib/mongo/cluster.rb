@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2014-2020 MongoDB Inc.
 #
@@ -157,7 +157,7 @@ module Mongo
       # @sdam_flow_lock covers just the sdam flow. Note it does not apply
       # to @topology replacements which are done under @update_lock.
       @sdam_flow_lock = Mutex.new
-      Session::SessionPool.create(self)
+      @session_pool = Session::SessionPool.new(self)
 
       if seeds.empty? && load_balanced?
         raise ArgumentError, 'Load-balanced clusters with no seeds are prohibited'
@@ -185,6 +185,8 @@ module Mongo
         # Recreate the topology to get the current server list into it
         recreate_topology(topology, opening_topology)
       end
+
+      possibly_warn_about_compatibility!
 
       if load_balanced?
         # We are required by the specifications to produce certain SDAM events
@@ -263,10 +265,10 @@ module Mongo
             log_debug("Waiting for up to #{'%.2f' % time_remaining} seconds for servers to be scanned: #{summary}")
             # Since the semaphore may have been signaled between us checking
             # the servers list above and the wait call below, we should not
-            # wait for the full remaining time - wait for up to 1 second, then
+            # wait for the full remaining time - wait for up to 0.5 second, then
             # recheck the state.
             begin
-              server_selection_semaphore.wait([time_remaining, 1].min)
+              server_selection_semaphore.wait([time_remaining, 0.5].min)
             rescue ::Timeout::Error
               # nothing
             end
@@ -280,20 +282,22 @@ module Mongo
     # Create a cluster for the provided client, for use when we don't want the
     # client's original cluster instance to be the same.
     #
-    # @api private
-    #
     # @example Create a cluster for the client.
     #   Cluster.create(client)
     #
     # @param [ Client ] client The client to create on.
+    # @param [ Monitoring | nil ] monitoring. The monitoring instance to use
+    #   with the new cluster. If nil, a new instance of Monitoring will be
+    #   created.
     #
     # @return [ Cluster ] The cluster.
     #
     # @since 2.0.0
-    def self.create(client)
+    # @api private
+    def self.create(client, monitoring: nil)
       cluster = Cluster.new(
         client.cluster.addresses.map(&:to_s),
-        Monitoring.new,
+        monitoring || Monitoring.new,
         client.cluster_options,
       )
       client.instance_variable_set(:@cluster, cluster)
@@ -495,13 +499,16 @@ module Mongo
     # events in the process. Stops SRV monitoring if it is active.
     # Marks the cluster disconnected.
     #
-    # @return [ true ] Always true.
+    # A closed cluster is no longer usable. If the client is reconnected,
+    # it will create a new cluster instance.
     #
-    # @since 2.1.0
-    def disconnect!
+    # @return [ nil ] Always nil.
+    #
+    # @api private
+    def close
       @state_change_lock.synchronize do
         unless connecting? || connected?
-          return true
+          return nil
         end
         if options[:cleanup] != false
           session_pool.end_sessions
@@ -514,7 +521,7 @@ module Mongo
         end
         @servers.each do |server|
           if server.connected?
-            server.disconnect!
+            server.close
             publish_sdam_event(
               Monitoring::SERVER_CLOSED,
               Monitoring::Event::ServerClosed.new(server.address, topology)
@@ -529,7 +536,7 @@ module Mongo
           @connecting = @connected = false
         end
       end
-      true
+      nil
     end
 
     # Reconnect all servers.
@@ -620,10 +627,12 @@ module Mongo
     #   respective server is cleared. Set this option to true to keep the
     #   existing connection pool (required when handling not master errors
     #   on 4.2+ servers).
-    # @option aptions [ true | false ] :awaited Whether the updated description
+    # @option options [ true | false ] :awaited Whether the updated description
     #   was a result of processing an awaited hello.
     # @option options [ Object ] :service_id Change state for the specified
     #   service id only.
+    # @option options [ Mongo::Error | nil ] :scan_error The error encountered
+    #   while scanning, or nil if no error was raised.
     #
     # @api private
     def run_sdam_flow(previous_desc, updated_desc, options = {})
@@ -634,7 +643,9 @@ module Mongo
               # TODO should service id be taken out of updated_desc?
               # We could also assert that
               # options[:service_id] == updated_desc.service_id
-              server.clear_connection_pool(service_id: options[:service_id])
+              err = options[:scan_error]
+              interrupt = err && (err.is_a?(Error::SocketError) || err.is_a?(Error::SocketTimeoutError))
+              server.clear_connection_pool(service_id: options[:service_id], interrupt_in_use_connections: interrupt)
             end
           end
         end
@@ -654,7 +665,9 @@ module Mongo
           if flow.became_unknown?
             servers_list.each do |server|
               if server.address == updated_desc.address
-                server.clear_connection_pool
+                err = options[:scan_error]
+                interrupt = err && (err.is_a?(Error::SocketError) || err.is_a?(Error::SocketTimeoutError))
+                server.clear_connection_pool(interrupt_in_use_connections: interrupt)
               end
             end
           end
@@ -695,12 +708,16 @@ module Mongo
     # @api private
     def set_server_list(server_address_strs)
       @sdam_flow_lock.synchronize do
+        # If one of the new addresses is not in the current servers list,
+        # add it to the servers list.
         server_address_strs.each do |address_str|
           unless servers_list.any? { |server| server.address.seed == address_str }
             add(address_str)
           end
         end
 
+        # If one of the servers' addresses are not in the new address list,
+        # remove that server from the servers list.
         servers_list.each do |server|
           unless server_address_strs.any? { |address_str| server.address.seed == address_str }
             remove(server.address.seed)
@@ -822,6 +839,9 @@ module Mongo
       address = Address.new(host, options)
       if !addresses.include?(address)
         opts = options.merge(monitor: false)
+        # If we aren't starting the montoring threads, we also don't want to
+        # start the pool's populator thread.
+        opts.merge!(populator_io: false) unless options.fetch(:monitoring_io, true)
         # Note that in a load-balanced topology, every server must be a
         # load balancer (load_balancer: true is specified in the options)
         # but this option isn't set here because we are required by the
@@ -925,6 +945,7 @@ module Mongo
     # @api private
     def disconnect_server_if_connected(server)
       if server.connected?
+        server.clear_description
         server.disconnect!
         publish_sdam_event(
           Monitoring::SERVER_CLOSED,
@@ -1062,6 +1083,30 @@ module Mongo
         Monitoring::TOPOLOGY_CHANGED,
         Monitoring::Event::TopologyChanged.new(previous_topology, @topology)
       )
+    end
+
+    COSMOSDB_HOST_PATTERNS = %w[ .cosmos.azure.com ]
+    COSMOSDB_LOG_MESSAGE = 'You appear to be connected to a CosmosDB cluster. ' \
+      'For more information regarding feature compatibility and support please visit ' \
+      'https://www.mongodb.com/supportability/cosmosdb'
+
+    DOCUMENTDB_HOST_PATTERNS = %w[ .docdb.amazonaws.com .docdb-elastic.amazonaws.com ]
+    DOCUMENTDB_LOG_MESSAGE = 'You appear to be connected to a DocumentDB cluster. ' \
+      'For more information regarding feature compatibility and support please visit ' \
+      'https://www.mongodb.com/supportability/documentdb'
+
+    # Compares the server hosts with address suffixes of known services
+    # that provide limited MongoDB API compatibility, and warns about them.
+    def possibly_warn_about_compatibility!
+      if topology.server_hosts_match_any?(COSMOSDB_HOST_PATTERNS)
+        log_info COSMOSDB_LOG_MESSAGE
+        return
+      end
+
+      if topology.server_hosts_match_any?(DOCUMENTDB_HOST_PATTERNS)
+        log_info DOCUMENTDB_LOG_MESSAGE
+        return
+      end
     end
   end
 end

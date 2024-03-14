@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'lite_spec_helper'
 
@@ -8,7 +8,7 @@ describe Mongo::BulkWrite::Result do
     {'n_inserted' => 2, 'n' => 3, 'inserted_ids' => [1, 2]}
   end
 
-  let(:subject) { described_class.new(results_document) }
+  let(:subject) { described_class.new(results_document, true) }
 
   describe 'construction' do
     it 'works' do
@@ -121,6 +121,20 @@ describe Mongo::BulkWrite::Result do
           subject.validate!
         # BulkWriteErrors don't have any messages on them
         end.to raise_error(Mongo::Error::BulkWriteError, nil)
+      end
+    end
+  end
+
+  describe "#acknowledged?" do
+
+    [true, false].each do |b|
+      context "when acknowledged is passed as #{b}" do
+
+        let(:result) { described_class.new(results_document, b) }
+
+        it "acknowledged? is #{b}" do
+          expect(result.acknowledged?).to be b
+        end
       end
     end
   end

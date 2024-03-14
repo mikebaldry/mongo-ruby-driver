@@ -1,11 +1,12 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'spec_helper'
 
 # this test performs direct network connections without retries.
 # In case of intermittent network issues, retry the entire failing test.
-describe Mongo::Socket::SSL, retry: 3 do
+describe Mongo::Socket::SSL do
+  retry_test
   clean_slate_for_all
   require_tls
 
@@ -375,7 +376,7 @@ describe Mongo::Socket::SSL, retry: 3 do
 
           let(:ssl_options) do
             super().merge(
-              :ssl_cert => COMMAND_MONITORING_TESTS.first,
+              :ssl_cert => CRUD_TESTS.first,
               :ssl_key => nil,
             )
           end
@@ -393,7 +394,7 @@ describe Mongo::Socket::SSL, retry: 3 do
           let(:ssl_options) do
             super().merge(
               :ssl_cert => nil,
-              :ssl_key => COMMAND_MONITORING_TESTS.first,
+              :ssl_key => CRUD_TESTS.first,
             )
           end
 
@@ -411,7 +412,7 @@ describe Mongo::Socket::SSL, retry: 3 do
 
           let(:ssl_options) do
             super().merge(
-              :ssl_cert => COMMAND_MONITORING_TESTS.first,
+              :ssl_cert => CRUD_TESTS.first,
               :ssl_key => nil,
             )
           end
@@ -591,14 +592,8 @@ describe Mongo::Socket::SSL, retry: 3 do
         )
       end
 
-      around do |example|
-        saved = ENV['SSL_CERT_FILE']
-        ENV['SSL_CERT_FILE'] = SpecConfig.instance.local_ca_cert_path
-        begin
-          example.run
-        ensure
-          ENV['SSL_CERT_FILE'] = saved
-        end
+      local_env do
+        { 'SSL_CERT_FILE' => SpecConfig.instance.local_ca_cert_path }
       end
 
       it 'uses the default cert store' do

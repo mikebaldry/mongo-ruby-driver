@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'spec_helper'
 
@@ -647,7 +647,15 @@ describe Mongo::Collection do
     context 'when the collection is capped' do
 
       let(:collection) do
-        described_class.new(database, :specs, :capped => true, :size => 1024)
+        described_class.new(database, :specs, :capped => true, :size => 4096, :max => 512)
+      end
+
+      let(:collstats) do
+        collection.aggregate([ {'$collStats' => { 'storageStats' => {} }} ]).first
+      end
+
+      let(:storage_stats) do
+        collstats.fetch('storageStats', {})
       end
 
       before do
@@ -657,6 +665,12 @@ describe Mongo::Collection do
 
       it 'returns true' do
         expect(collection).to be_capped
+      end
+
+      it "applies the options" do
+        expect(storage_stats["capped"]).to be true
+        expect(storage_stats["max"]).to eq(512)
+        expect(storage_stats["maxSize"]).to eq(4096)
       end
     end
 
@@ -797,6 +811,38 @@ describe Mongo::Collection do
             expect(change_doc['operationType']).to eq('update')
             expect(change_doc['updateDescription']['updatedFields']['a']).to eq(2)
           end
+        end
+      end
+    end
+
+    context 'when the change stream is empty' do
+      require_wired_tiger
+      min_server_fcv '3.6'
+      require_topology :replica_set
+
+      context 'when setting the max_await_time_ms' do
+
+        let(:change_stream) do
+          authorized_collection.watch([], max_await_time_ms: 3000)
+        end
+
+        let(:enum) { change_stream.to_enum }
+
+        it 'sets the option correctly' do
+          expect(change_stream.instance_variable_get(:@cursor)).to receive(:get_more_operation).once.and_wrap_original do |m, *args, &block|
+            m.call(*args).tap do |op|
+              expect(op.max_time_ms).to eq(3000)
+            end
+          end
+          enum.next
+        end
+
+        it "waits the appropriate amount of time" do
+          start_time = Mongo::Utils.monotonic_time
+          enum.try_next
+          end_time = Mongo::Utils.monotonic_time
+
+          expect(end_time-start_time).to be >= 3
         end
       end
     end

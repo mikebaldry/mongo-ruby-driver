@@ -1,19 +1,48 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 module Unified
 
   module CrudOperations
 
     def find(op)
+      get_find_view(op).to_a
+    end
+
+    def find_one(op)
+      get_find_view(op).first
+    end
+
+    def get_find_view(op)
       collection = entities.get(:collection, op.use!('object'))
       use_arguments(op) do |args|
         opts = {
           let: args.use('let'),
           comment: args.use('comment'),
+          allow_disk_use: args.use('allowDiskUse'),
+          show_disk_loc: args.use('showRecordId'),
+          return_key: args.use('returnKey'),
+          projection: args.use('projection'),
+          skip: args.use('skip'),
+          hint: args.use('hint'),
+          max_value: args.use('max'),
+          max_time_ms: args.use('maxTimeMS'),
+          min_value: args.use('min'),
         }
         if session = args.use('session')
           opts[:session] = entities.get(:session, session)
+        end
+        if collation = args.use('collation')
+          opts[:collation] = collation
+        end
+        if args.key?('noCursorTimeout')
+          opts[:no_cursor_timeout] = args.use('noCursorTimeout')
+        end
+        if args.key?('oplogReplay')
+          opts[:oplog_replay] = args.use('oplogReplay')
+        end
+        if args.key?('allowPartialResults')
+          opts[:allow_partial_results] = args.use('allowPartialResults')
         end
         req = collection.find(args.use!('filter'), **opts)
         if batch_size = args.use('batchSize')
@@ -25,7 +54,10 @@ module Unified
         if limit = args.use('limit')
           req = req.limit(limit)
         end
-        result = req.to_a
+        if projection = args.use('projection')
+          req = req.projection(projection)
+        end
+        req
       end
     end
 
@@ -35,6 +67,9 @@ module Unified
         opts = {}
         if session = args.use('session')
           opts[:session] = entities.get(:session, session)
+        end
+        if comment = args.use('comment')
+          opts[:comment] = comment
         end
         collection.find(args.use!('filter')).count_documents(**opts)
       end
@@ -61,6 +96,9 @@ module Unified
         if session = args.use('session')
           opts[:session] = entities.get(:session, session)
         end
+        if comment = args.use('comment')
+          opts[:comment] = comment
+        end
         req = collection.find(args.use!('filter'), **opts).distinct(args.use!('fieldName'), **opts)
         result = req.to_a
       end
@@ -74,6 +112,8 @@ module Unified
         opts = {
           let: args.use('let'),
           comment: args.use('comment'),
+          hint: args.use('hint'),
+          upsert: args.use('upsert'),
         }
         if return_document = args.use('returnDocument')
           opts[:return_document] = return_document.downcase.to_sym
@@ -93,6 +133,7 @@ module Unified
         opts = {
           let: args.use('let'),
           comment: args.use('comment'),
+          hint: args.use('hint'),
         }
         if session = args.use('session')
           opts[:session] = entities.get(:session, session)
@@ -108,6 +149,7 @@ module Unified
         opts = {
           let: args.use('let'),
           comment: args.use('comment'),
+          hint: args.use('hint'),
         }
         if session = args.use('session')
           opts[:session] = entities.get(:session, session)
@@ -151,6 +193,8 @@ module Unified
         opts = {
           let: args.use('let'),
           comment: args.use('comment'),
+          hint: args.use('hint'),
+          upsert: args.use('upsert'),
         }
         if session = args.use('session')
           opts[:session] = entities.get(:session, session)
@@ -165,6 +209,7 @@ module Unified
         opts = {
           let: args.use('let'),
           comment: args.use('comment'),
+          hint: args.use('hint'),
         }
         collection.update_many(args.use!('filter'), args.use!('update'), **opts)
       end
@@ -178,7 +223,8 @@ module Unified
           args.use!('replacement'),
           comment: args.use('comment'),
           upsert: args.use('upsert'),
-          let: args.use('let')
+          let: args.use('let'),
+          hint: args.use('hint')
         )
       end
     end
@@ -189,6 +235,7 @@ module Unified
         opts = {
           let: args.use('let'),
           comment: args.use('comment'),
+          hint: args.use('hint'),
         }
         if session = args.use('session')
           opts[:session] = entities.get(:session, session)
@@ -203,6 +250,7 @@ module Unified
         opts = {
           let: args.use('let'),
           comment: args.use('comment'),
+          hint: args.use('hint'),
         }
         collection.delete_many(args.use!('filter'), **opts)
       end
@@ -215,8 +263,8 @@ module Unified
           convert_bulk_write_spec(req)
         end
         opts = {}
-        if ordered = args.use('ordered')
-          opts[:ordered] = true
+        if args.key?('ordered')
+          opts[:ordered] = args.use!('ordered')
         end
         if comment = args.use('comment')
           opts[:comment] = comment
@@ -244,6 +292,9 @@ module Unified
       if batch_size = args.use('batchSize')
         opts[:batch_size] = batch_size
       end
+      if args.key?('allowDiskUse')
+        opts[:allow_disk_use] = args.use('allowDiskUse')
+      end
       unless args.empty?
         raise NotImplementedError, "Unhandled spec keys: #{args} in #{test_spec}"
       end
@@ -266,16 +317,20 @@ module Unified
           filter: spec.use('filter'),
           update: spec.use('update'),
           upsert: spec.use('upsert'),
+          array_filters: spec.use('arrayFilters'),
+          hint: spec.use('hint'),
         }
       when 'replaceOne'
         {
           filter: spec.use('filter'),
           replacement: spec.use('replacement'),
           upsert: spec.use('upsert'),
+          hint: spec.use('hint'),
         }
       when 'deleteOne', 'deleteMany'
         {
           filter: spec.use('filter'),
+          hint: spec.use('hint'),
         }
       else
         raise NotImplementedError, "Unknown operation #{op}"

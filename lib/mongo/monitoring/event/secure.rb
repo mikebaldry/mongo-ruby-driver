@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2015-2020 MongoDB Inc.
 #
@@ -58,7 +58,7 @@ module Mongo
             # According to Command Monitoring spec,for hello/legacy hello commands
             # when speculativeAuthenticate is present, their commands AND replies
             # MUST be redacted from the events.
-            # See https://github.com/mongodb/specifications/blob/master/source/command-monitoring/command-monitoring.rst#security
+            # See https://github.com/mongodb/specifications/blob/master/source/command-logging-and-monitoring/command-logging-and-monitoring.rst#security
             true
           else
             false

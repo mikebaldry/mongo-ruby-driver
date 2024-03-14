@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2014-2020 MongoDB Inc.
 #
@@ -71,6 +71,7 @@ module Mongo
       :local_threshold,
       :logger,
       :log_prefix,
+      :max_connecting,
       :max_idle_time,
       :max_pool_size,
       :max_read_retries,
@@ -80,6 +81,7 @@ module Mongo
       :monitoring_io,
       :password,
       :platform,
+      :populator_io,
       :read,
       :read_concern,
       :read_retry_interval,
@@ -265,10 +267,16 @@ module Mongo
     # @option options [ String ] :log_prefix A custom log prefix to use when
     #   logging. This option is experimental and subject to change in a future
     #   version of the driver.
+    # @option options [ Integer ] :max_connecting The maximum number of
+    #  connections that can be connecting simultaneously. The default is 2.
+    #  This option should be increased if there are many threads that share
+    #  the same client and the application is experiencing timeouts
+    #  while waiting for connections to be established.
+    #  selecting a server for an operation. The default is 2.
     # @option options [ Integer ] :max_idle_time The maximum seconds a socket can remain idle
     #   since it has been checked in to the pool.
     # @option options [ Integer ] :max_pool_size The maximum size of the
-    #   connection pool.
+    #   connection pool. Setting this option to zero creates an unlimited connection pool.
     # @option options [ Integer ] :max_read_retries The maximum number of read
     #   retries when legacy read retries are in use.
     # @option options [ Integer ] :max_write_retries The maximum number of write
@@ -437,7 +445,8 @@ module Mongo
     #     are :aws, :azure, :gcp, :kmip, :local. There may be more than one
     #     kms provider specified.
     #   - :schema_map => Hash | nil, JSONSchema for one or more collections
-    #     specifying which fields should be encrypted.
+    #     specifying which fields should be encrypted. This option is
+    #     mutually exclusive with :schema_map_path.
     #     - Note: Schemas supplied in the schema_map only apply to configuring
     #       automatic encryption for client side encryption. Other validation
     #       rules in the JSON schema will not be enforced by the driver and will
@@ -446,10 +455,27 @@ module Mongo
     #       JSON Schemas obtained from the server. It protects against a
     #       malicious server advertising a false JSON Schema, which could trick
     #       the client into sending unencrypted data that should be encrypted.
+    #     - Note: If a collection is present on both the :encrypted_fields_map
+    #       and :schema_map, an error will be raised.
+    #   - :schema_map_path => String | nil A path to a file contains the JSON schema
+    #   of the collection that stores auto encrypted documents. This option is
+    #   mutually exclusive with :schema_map.
     #   - :bypass_auto_encryption => Boolean, when true, disables auto encryption;
     #     defaults to false.
     #   - :extra_options => Hash | nil, options related to spawning mongocryptd
     #     (this part of the API is subject to change).
+    #   - :encrypted_fields_map => Hash | nil, maps a collection namespace to
+    #     a hash describing encrypted fields for queryable encryption.
+    #     - Note: If a collection is present on both the encryptedFieldsMap
+    #       and schemaMap, an error will be raised.
+    #   - :bypass_query_analysis => Boolean | nil, when true disables automatic
+    #     analysis of outgoing commands.
+    #   - :crypt_shared_lib_path => [ String | nil ]  Path that should
+    #     be  the used to load the crypt shared library. Providing this option
+    #     overrides default crypt shared library load paths for libmongocrypt.
+    #   - :crypt_shared_lib_required => [ Boolean | nil ]  Whether
+    #     crypt shared library is required. If 'true', an error will be raised
+    #     if a crypt_shared library cannot be loaded by libmongocrypt.
     #
     #   Notes on automatic encryption:
     #   - Automatic encryption is an enterprise only feature that only applies
@@ -578,9 +604,9 @@ module Mongo
 
       rescue
         begin
-          @cluster.disconnect!
+          @cluster.close
         rescue => e
-          log_warn("Eror disconnecting cluster in client constructor's exception handler: #{e.class}: #{e}")
+          log_warn("Eror closing cluster in client constructor's exception handler: #{e.class}: #{e}")
           # Drop this exception so that the original exception is raised
         end
         raise
@@ -755,7 +781,7 @@ module Mongo
         # We can't use the same cluster if some options that would affect it
         # have changed.
         if cluster_modifying?(opts)
-          Cluster.create(client)
+          Cluster.create(client, monitoring: opts[:monitoring])
         end
       end
     end
@@ -841,6 +867,10 @@ module Mongo
       @write_concern ||= WriteConcern.get(options[:write_concern] || options[:write])
     end
 
+    def closed?
+      !!@closed
+    end
+
     # Close all connections.
     #
     # @return [ true ] Always true.
@@ -848,6 +878,7 @@ module Mongo
     # @since 2.1.0
     def close
       @connect_lock.synchronize do
+        @closed = true
         do_close
       end
       true
@@ -881,6 +912,8 @@ module Mongo
         if @options[:auto_encryption_options]
           build_encrypter
         end
+
+        @closed = false
       end
 
       true
@@ -1003,13 +1036,35 @@ module Mongo
     #
     # @param [ Array<Hash> ] pipeline Optional additional filter operators.
     # @param [ Hash ] options The change stream options.
+    # @option options [ String ] :full_document Allowed values: nil, 'default',
+    #   'updateLookup', 'whenAvailable', 'required'.
     #
-    # @option options [ String ] :full_document Allowed values: nil, 'default'
-    #   (behaves same as nil), 'updateLookup'. When set to 'updateLookup', the
-    #   change notification for partial updates will include both a delta
-    #   describing the changes to the document, as well as a copy of the entire
-    #   document that was changed from some time after the change occurred. The
-    #   default is to not send a value.
+    #   The default is to not send a value (i.e. nil), which is equivalent to
+    #   'default'. By default, the change notification for partial updates will
+    #   include a delta describing the changes to the document.
+    #
+    #   When set to 'updateLookup', the change notification for partial updates
+    #   will include both a delta describing the changes to the document as well
+    #   as a copy of the entire document that was changed from some time after
+    #   the change occurred.
+    #
+    #   When set to 'whenAvailable', configures the change stream to return the
+    #   post-image of the modified document for replace and update change events
+    #   if the post-image for this event is available.
+    #
+    #   When set to 'required', the same behavior as 'whenAvailable' except that
+    #   an error is raised if the post-image is not available.
+    # @option options [ String ] :full_document_before_change Allowed values: nil,
+    #   'whenAvailable', 'required', 'off'.
+    #
+    #   The default is to not send a value (i.e. nil), which is equivalent to 'off'.
+    #
+    #   When set to 'whenAvailable', configures the change stream to return the
+    #   pre-image of the modified document for replace, update, and delete change
+    #   events if it is available.
+    #
+    #   When set to 'required', the same behavior as 'whenAvailable' except that
+    #   an error is raised if the pre-image is not available.
     # @option options [ BSON::Document, Hash ] :resume_after Specifies the logical starting point
     #   for the new change stream.
     # @option options [ Integer ] :max_await_time_ms The maximum amount of time for the server to
@@ -1023,6 +1078,11 @@ module Mongo
     #   Only recognized by server versions 4.0+.
     # @option options [ Object ] :comment A user-provided
     #   comment to attach to this command.
+    # @option options [ Boolean ] :show_expanded_events Enables the server to
+    #   send the 'expanded' list of change stream events. The list of additional
+    #   events included with this flag set are: createIndexes, dropIndexes,
+    #   modify, create, shardCollection, reshardCollection,
+    #   refineCollectionShardKey.
     #
     # @note A change stream only allows 'majority' read concern.
     # @note This helper method is preferable to running a raw aggregation with a $changeStream
@@ -1034,8 +1094,11 @@ module Mongo
     def watch(pipeline = [], options = {})
       return use(Database::ADMIN).watch(pipeline, options) unless database.name == Database::ADMIN
 
+      view_options = options.dup
+      view_options[:await_data] = true if options[:max_await_time_ms]
+
       Mongo::Collection::View::ChangeStream.new(
-        Mongo::Collection::View.new(self["#{Database::COMMAND}.aggregate"]),
+        Mongo::Collection::View.new(self["#{Database::COMMAND}.aggregate"], {}, view_options),
         pipeline,
         Mongo::Collection::View::ChangeStream::CLUSTER,
         options)
@@ -1085,6 +1148,9 @@ module Mongo
     #
     # @api private
     def with_session(options = {}, &block)
+      # TODO: Add this back in RUBY-3174.
+      # assert_not_closed
+
       session = get_session(options)
 
       yield session
@@ -1109,6 +1175,14 @@ module Mongo
           [k, v]
         end])
       end
+    end
+
+    # Returns encrypted field map hash if provided when creating the client.
+    #
+    # @return [ Hash | nil ] Encrypted field map hash, or nil if not set.
+    # @api private
+    def encrypted_fields_map
+      @encrypted_fields_map ||= @options.fetch(:auto_encryption_options, {})[:encrypted_fields_map]
     end
 
     private
@@ -1139,7 +1213,7 @@ module Mongo
 
     # Implementation for #close, assumes the connect lock is already acquired.
     def do_close
-      @cluster.disconnect!
+      @cluster.close
       close_encrypter
     end
 
@@ -1181,8 +1255,15 @@ module Mongo
       Session.new(server_session, self, options)
     end
 
+    # Auxiliary method that is called by interpreter when copying the client
+    # via dup or clone.
+    #
+    # @param [ Mongo::Client ] original Client that is being cloned.
+    #
+    # @api private
     def initialize_copy(original)
       @options = original.options.dup
+      @connect_lock = Mutex.new
       @monitoring = @cluster ? monitoring : Monitoring.new(options)
       @database = nil
       @read_preference = nil
@@ -1244,6 +1325,7 @@ module Mongo
         key = k.to_sym
         if VALID_OPTIONS.include?(key)
           validate_max_min_pool_size!(key, opts)
+          validate_max_connecting!(key, opts)
           validate_read!(key, opts)
           if key == :compressors
             compressors = valid_compressors(v)
@@ -1499,7 +1581,26 @@ module Mongo
     def validate_max_min_pool_size!(option, opts)
       if option == :min_pool_size && opts[:min_pool_size]
         max = opts[:max_pool_size] || Server::ConnectionPool::DEFAULT_MAX_SIZE
-        raise Error::InvalidMinPoolSize.new(opts[:min_pool_size], max) unless opts[:min_pool_size] <= max
+        if max != 0 && opts[:min_pool_size] > max
+          raise Error::InvalidMinPoolSize.new(opts[:min_pool_size], max)
+        end
+      end
+      true
+    end
+
+    # Validates whether the max_connecting option is valid.
+    #
+    # @param [ Symbol ] option The option to validate.
+    # @param [ Hash ] opts The client options.
+    #
+    # @return [ true ] If the option is valid.
+    # @raise [ Error::InvalidMaxConnecting ] If the option is invalid.
+    def validate_max_connecting!(option, opts)
+      if option == :max_connecting && opts.key?(:max_connecting)
+        max_connecting = opts[:max_connecting] || Server::ConnectionPool::DEFAULT_MAX_CONNECTING
+        if max_connecting <= 0
+          raise Error::InvalidMaxConnecting.new(opts[:max_connecting])
+        end
       end
       true
     end
@@ -1511,7 +1612,7 @@ module Mongo
         # for custom classes implementing key access ([]).
         # Instead reject common cases of strings and symbols.
         if read.is_a?(String) || read.is_a?(Symbol)
-          raise Error::InvalidReadOption.new(read, 'must be a hash')
+          raise Error::InvalidReadOption.new(read, "the read preference must be specified as a hash: { mode: #{read.inspect} }")
         end
 
         if mode = read[:mode]
@@ -1522,6 +1623,12 @@ module Mongo
         end
       end
       true
+    end
+
+    def assert_not_closed
+      if closed?
+        raise Error::ClientClosed, "The client was closed and is not usable for operations. Call #reconnect to reset this client instance or create a new client instance"
+      end
     end
   end
 end

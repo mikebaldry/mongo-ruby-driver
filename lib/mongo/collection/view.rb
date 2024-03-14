@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2014-2020 MongoDB Inc.
 #
@@ -127,6 +127,7 @@ module Mongo
       #   return in each response from MongoDB.
       # @option options [ Hash ] :collation The collation to use.
       # @option options [ String ] :comment Associate a comment with the query.
+      # @option options [ :tailable, :tailable_await ] :cursor_type The type of cursor to use.
       # @option options [ Hash ] :explain Execute an explain with the provided
       #   explain options (known options are :verbose and :verbosity) rather
       #   than a find.

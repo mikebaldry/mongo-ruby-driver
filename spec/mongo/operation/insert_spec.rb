@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'spec_helper'
 
@@ -177,7 +177,7 @@ describe Mongo::Operation::Insert do
         end
 
         it 'inserts the documents into the collection' do
-          expect(authorized_collection.find.to_a). to eq(documents)
+          expect(authorized_collection.find.sort(_id: 1).to_a). to eq(documents)
         end
       end
 

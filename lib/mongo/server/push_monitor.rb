@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2020 MongoDB Inc.
 #
@@ -78,7 +78,7 @@ module Mongo
           if @connection
             # Interrupt any in-progress exhausted hello reads by
             # disconnecting the connection.
-            @connection.send(:socket).close
+            @connection.send(:socket).close rescue nil
           end
         end
         super.tap do
@@ -124,8 +124,14 @@ module Mongo
           bg_error_backtrace: options[:bg_error_backtrace],
         )
 
-        # Avoid tight looping in push monitor - see RUBY-2806.
-        sleep(0.5)
+        # If a request failed on a connection, stop push monitoring.
+        # In case the server is dead we don't want to have two connections
+        # trying to connect unsuccessfully at the same time.
+        stop!
+
+        # Request an immediate check on the monitor to get reinstated as
+        # soon as possible in case the server is actually alive.
+        server.scan_semaphore.signal
       end
 
       def check
@@ -188,6 +194,10 @@ module Mongo
         Timeout.timeout(timeout, Error::SocketTimeoutError, "Failed to read an awaited hello response in #{timeout} seconds") do
           @lock.synchronize { @connection }.read_response(socket_timeout: timeout)
         end
+      end
+
+      def to_s
+        "#<#{self.class.name}:#{object_id} #{server.address}>"
       end
 
     end

@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2014-2020 MongoDB Inc.
 #
@@ -26,7 +26,7 @@ require 'runners/crud/operation'
 require 'runners/crud/verifier'
 
 def collection_data(collection)
-  collection.find.to_a
+  collection.find.sort(_id: 1).to_a
 end
 
 def crud_execute_operations(spec, test, num_ops, event_subscriber, expect_error,

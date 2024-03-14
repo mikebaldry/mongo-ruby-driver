@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2014-2020 MongoDB Inc.
 #
@@ -482,6 +482,12 @@ module Mongo
         else
           database.write_concern
         end
+      end
+
+      # Drop the collections that implement this bucket.
+      def drop
+        files_collection.drop
+        chunks_collection.drop
       end
 
       private

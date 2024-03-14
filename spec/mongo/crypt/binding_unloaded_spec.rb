@@ -1,10 +1,16 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'lite_spec_helper'
 
 describe 'Mongo::Crypt::Binding' do
   require_no_libmongocrypt
+
+  before(:all) do
+    if ENV['FLE'] == 'helper'
+      skip 'FLE=helper is incompatible with unloaded binding tests'
+    end
+  end
 
   context 'when load fails' do
 

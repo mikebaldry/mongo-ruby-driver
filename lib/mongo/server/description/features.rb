@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2014-2020 MongoDB Inc.
 #
@@ -36,6 +36,7 @@ module Mongo
         # -  9 => 4.4
         # - 13 => 5.0
         # - 14 => 5.1
+        # - 17 => 6.0
         #
         # @since 2.0.0
         MAPPINGS = {
@@ -47,6 +48,7 @@ module Mongo
           # provided by the client during findAndModify operations, requiring the
           # driver to raise client-side errors when those options are provided.
           find_and_modify_option_validation: 8,
+          sharded_transactions: 8,
           transactions: 7,
           scram_sha_256: 7,
           array_filters: 6,
@@ -81,7 +83,7 @@ module Mongo
         # The wire protocol versions that this version of the driver supports.
         #
         # @since 2.0.0
-        DRIVER_WIRE_VERSIONS = (6..15).freeze
+        DRIVER_WIRE_VERSIONS = (6..21).freeze
 
         # Create the methods for each mapping to tell if they are supported.
         #

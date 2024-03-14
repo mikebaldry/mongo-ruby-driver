@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2017-2020 MongoDB Inc.
 #
@@ -70,12 +70,35 @@ module Mongo
         # @param [ Array<Hash> ] pipeline The pipeline of operators to filter the change notifications.
         # @param [ Hash ] options The change stream options.
         #
-        # @option options [ String ] :full_document Allowed values: nil, 'default'
-        #   (behaves same as nil), 'updateLookup'. When set to 'updateLookup', the
-        #   change notification for partial updates will include both a delta
-        #   describing the changes to the document, as well as a copy of the entire
-        #   document that was changed from some time after the change occurred. The
-        #   default is to not send a value.
+        # @option options [ String ] :full_document Allowed values: nil, 'default',
+        #   'updateLookup', 'whenAvailable', 'required'.
+        #
+        #   The default is to not send a value (i.e. nil), which is equivalent to
+        #   'default'. By default, the change notification for partial updates will
+        #   include a delta describing the changes to the document.
+        #
+        #   When set to 'updateLookup', the change notification for partial updates
+        #   will include both a delta describing the changes to the document as well
+        #   as a copy of the entire document that was changed from some time after
+        #   the change occurred.
+        #
+        #   When set to 'whenAvailable', configures the change stream to return the
+        #   post-image of the modified document for replace and update change events
+        #   if the post-image for this event is available.
+        #
+        #   When set to 'required', the same behavior as 'whenAvailable' except that
+        #   an error is raised if the post-image is not available.
+        # @option options [ String ] :full_document_before_change Allowed values: nil,
+        #   'whenAvailable', 'required', 'off'.
+        #
+        #   The default is to not send a value (i.e. nil), which is equivalent to 'off'.
+        #
+        #   When set to 'whenAvailable', configures the change stream to return the
+        #   pre-image of the modified document for replace, update, and delete change
+        #   events if it is available.
+        #
+        #   When set to 'required', the same behavior as 'whenAvailable' except that
+        #   an error is raised if the pre-image is not available.
         # @option options [ BSON::Document, Hash ] :resume_after Specifies the logical starting point for the
         #   new change stream.
         # @option options [ Integer ] :max_await_time_ms The maximum amount of time for the server to wait
@@ -92,6 +115,11 @@ module Mongo
         #   dropped and recreated or newly renamed collections without missing any notifications.
         # @option options [ Object ] :comment A user-provided
         #   comment to attach to this command.
+        # @option options [ Boolean ] :show_expanded_events Enables the server to
+        #   send the 'expanded' list of change stream events. The list of additional
+        #   events included with this flag set are: createIndexes, dropIndexes,
+        #   modify, create, shardCollection, reshardCollection,
+        #   refineCollectionShardKey.
         #
         #   The server will report an error if `startAfter` and `resumeAfter` are both specified.
         #
@@ -136,7 +164,7 @@ module Mongo
             document = try_next
             yield document if document
           end
-        rescue StopIteration => e
+        rescue StopIteration
           return self
         end
 
@@ -210,7 +238,7 @@ module Mongo
           unless closed?
             begin
               @cursor.close
-            rescue Error::OperationFailure, Error::SocketError, Error::SocketTimeoutError
+            rescue Error::OperationFailure, Error::SocketError, Error::SocketTimeoutError, Error::MissingConnection
               # ignore
             end
             @cursor = nil
@@ -314,6 +342,14 @@ module Mongo
           {}.tap do |doc|
             if @options[:full_document]
               doc[:fullDocument] = @options[:full_document]
+            end
+
+            if @options[:full_document_before_change]
+              doc[:fullDocumentBeforeChange] = @options[:full_document_before_change]
+            end
+
+            if @options.key?(:show_expanded_events)
+              doc[:showExpandedEvents] = @options[:show_expanded_events]
             end
 
             if resuming?

@@ -1,4 +1,5 @@
-# -*- mode: ruby -*-
+# frozen_string_literal: true
+# rubocop:todo all
 
 require 'bundler'
 require 'bundler/gem_tasks'
@@ -61,13 +62,13 @@ namespace :spec do
 
     client = ClientRegistry.instance.global_client('authorized')
     client.database.command(ping: 1)
-    deadline = Time.now + 300
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 300
     loop do
       begin
         client.cluster.validate_session_support!
         break
       rescue Mongo::Error::SessionsNotSupported
-        if Time.now >= deadline
+        if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
           raise "Sessions did not become supported in 300 seconds"
         end
         client.cluster.scan!
@@ -118,6 +119,32 @@ end
 
 task :release => ['release:check_private_key', 'release:do']
 
+desc 'Build and validate the evergreen config'
+task eg: %w[ eg:build eg:validate ]
+
+# 'eg' == 'evergreen', but evergreen is too many letters for convenience
+namespace :eg do
+  desc 'Builds the .evergreen/config.yml file from the templates'
+  task :build do
+    ruby '.evergreen/update-evergreen-configs'
+  end
+
+  desc 'Validates the .evergreen/config.yml file'
+  task :validate do
+    system 'evergreen validate --project mongo-ruby-driver .evergreen/config.yml'
+  end
+
+  desc 'Updates the evergreen executable to the latest available version'
+  task :update do
+    system 'evergreen get-update --install'
+  end
+
+  desc 'Runs the current branch as an evergreen patch'
+  task :patch do
+    system 'evergreen patch --uncommitted --project mongo-ruby-driver --browse --auto-description --yes'
+  end
+end
+
 desc "Generate all documentation"
 task :docs => 'docs:yard'
 
@@ -130,157 +157,4 @@ namespace :docs do
   end
 end
 
-require_relative "profile/benchmarking"
-
-# Some require data files, available from the drivers team. See the comments above each task for details."
-namespace :benchmark do
-  desc "Run the driver benchmark tests."
-
-  namespace :micro do
-    desc "Run the common driver micro benchmarking tests"
-
-    namespace :flat do
-      desc "Benchmarking for flat bson documents."
-
-      # Requirement: A file in Mongo::Benchmarking::DATA_PATH, called flat_bson.json.
-      task :encode do
-        puts "MICRO BENCHMARK:: FLAT:: ENCODE"
-        Mongo::Benchmarking::Micro.run(:flat, :encode)
-      end
-
-      # Requirement: A file in Mongo::Benchmarking::DATA_PATH, called flat_bson.json.
-      task :decode do
-        puts "MICRO BENCHMARK:: FLAT:: DECODE"
-        Mongo::Benchmarking::Micro.run(:flat, :decode)
-      end
-    end
-
-    namespace :deep do
-      desc "Benchmarking for deep bson documents."
-
-      # Requirement: A file in Mongo::Benchmarking::DATA_PATH, called deep_bson.json.
-      task :encode do
-        puts "MICRO BENCHMARK:: DEEP:: ENCODE"
-        Mongo::Benchmarking::Micro.run(:deep, :encode)
-      end
-
-      # Requirement: A file in Mongo::Benchmarking::DATA_PATH, called deep_bson.json.
-      task :decode do
-        puts "MICRO BENCHMARK:: DEEP:: DECODE"
-        Mongo::Benchmarking::Micro.run(:deep, :decode)
-      end
-    end
-
-    namespace :full do
-      desc "Benchmarking for full bson documents."
-
-      # Requirement: A file in Mongo::Benchmarking::DATA_PATH, called full_bson.json.
-      task :encode do
-        puts "MICRO BENCHMARK:: FULL:: ENCODE"
-        Mongo::Benchmarking::Micro.run(:full, :encode)
-      end
-
-      # Requirement: A file in Mongo::Benchmarking::DATA_PATH, called full_bson.json.
-      task :decode do
-        puts "MICRO BENCHMARK:: FULL:: DECODE"
-        Mongo::Benchmarking::Micro.run(:full, :decode)
-      end
-    end
-  end
-
-  namespace :single_doc do
-    desc "Run the common driver single-document benchmarking tests"
-    task :command do
-      puts "SINGLE DOC BENCHMARK:: COMMAND"
-      Mongo::Benchmarking::SingleDoc.run(:command)
-    end
-
-    # Requirement: A file in Mongo::Benchmarking::DATA_PATH, called TWEET.json.
-    task :find_one do
-      puts "SINGLE DOC BENCHMARK:: FIND ONE BY ID"
-      Mongo::Benchmarking::SingleDoc.run(:find_one)
-    end
-
-    # Requirement: A file in Mongo::Benchmarking::DATA_PATH, called SMALL_DOC.json.
-    task :insert_one_small do
-      puts "SINGLE DOC BENCHMARK:: INSERT ONE SMALL DOCUMENT"
-      Mongo::Benchmarking::SingleDoc.run(:insert_one_small)
-    end
-
-    # Requirement: A file in Mongo::Benchmarking::DATA_PATH, called LARGE_DOC.json.
-    task :insert_one_large do
-      puts "SINGLE DOC BENCHMARK:: INSERT ONE LARGE DOCUMENT"
-      Mongo::Benchmarking::SingleDoc.run(:insert_one_large)
-    end
-  end
-
-  namespace :multi_doc do
-    desc "Run the common driver multi-document benchmarking tests"
-
-    # Requirement: A file in Mongo::Benchmarking::DATA_PATH, called TWEET.json.
-    task :find_many do
-      puts "MULTI DOCUMENT BENCHMARK:: FIND MANY"
-      Mongo::Benchmarking::MultiDoc.run(:find_many)
-    end
-
-    # Requirement: A file in Mongo::Benchmarking::DATA_PATH, called SMALL_DOC.json.
-    task :bulk_insert_small do
-      puts "MULTI DOCUMENT BENCHMARK:: BULK INSERT SMALL"
-      Mongo::Benchmarking::MultiDoc.run(:bulk_insert_small)
-    end
-
-    # Requirement: A file in Mongo::Benchmarking::DATA_PATH, called LARGE_DOC.json.
-    task :bulk_insert_large do
-      puts "MULTI DOCUMENT BENCHMARK:: BULK INSERT LARGE"
-      Mongo::Benchmarking::MultiDoc.run(:bulk_insert_large)
-    end
-
-    # Requirement: A file in Mongo::Benchmarking::DATA_PATH, called GRIDFS_LARGE.
-    task :gridfs_upload do
-      puts "MULTI DOCUMENT BENCHMARK:: GRIDFS UPLOAD"
-      Mongo::Benchmarking::MultiDoc.run(:gridfs_upload)
-    end
-
-    # Requirement: A file in Mongo::Benchmarking::DATA_PATH, called GRIDFS_LARGE.
-    task :gridfs_download do
-      puts "MULTI DOCUMENT BENCHMARK:: GRIDFS DOWNLOAD"
-      Mongo::Benchmarking::MultiDoc.run(:gridfs_download)
-    end
-  end
-
-  namespace :parallel do
-    desc "Run the common driver paralell ETL benchmarking tests"
-
-    # Requirement: A directory in Mongo::Benchmarking::DATA_PATH, called LDJSON_MULTI,
-    # with the files used in this task.
-    task :import do
-      puts "PARALLEL ETL BENCHMARK:: IMPORT"
-      Mongo::Benchmarking::Parallel.run(:import)
-    end
-
-    # Requirement: A directory in Mongo::Benchmarking::DATA_PATH, called LDJSON_MULTI,
-    # with the files used in this task.
-    # Requirement: Another directory in "#{Mongo::Benchmarking::DATA_PATH}/LDJSON_MULTI"
-    # called 'output'.
-    task :export do
-      puts "PARALLEL ETL BENCHMARK:: EXPORT"
-      Mongo::Benchmarking::Parallel.run(:export)
-    end
-
-    # Requirement: A directory in Mongo::Benchmarking::DATA_PATH, called GRIDFS_MULTI,
-    # with the files used in this task.
-    task :gridfs_upload do
-      puts "PARALLEL ETL BENCHMARK:: GRIDFS UPLOAD"
-      Mongo::Benchmarking::Parallel.run(:gridfs_upload)
-    end
-
-    # Requirement: A directory in Mongo::Benchmarking::DATA_PATH, called GRIDFS_MULTI,
-    # with the files used in this task.
-    # Requirement: Another directory in "#{Mongo::Benchmarking::DATA_PATH}/GRIDFS_MULTI"
-    # called 'output'.
-    task :gridfs_download do
-      puts "PARALLEL ETL BENCHMARK:: GRIDFS DOWNLOAD"
-      Mongo::Benchmarking::Parallel.run(:gridfs_download)
-    end
-  end
-end
+load 'profile/driver_bench/rake/tasks.rake'

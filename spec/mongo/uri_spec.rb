@@ -1,9 +1,15 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'lite_spec_helper'
 
 describe Mongo::URI do
+
+  shared_examples "roundtrips string" do
+    it "returns the correct string for the uri" do
+      expect(uri.to_s).to eq(URI::DEFAULT_PARSER.unescape(string))
+    end
+  end
 
   describe '.get' do
 
@@ -64,6 +70,8 @@ describe Mongo::URI do
       it 'returns a Mongo::URI::SRVProtocol object' do
         expect(uri).to be_a(Mongo::URI::SRVProtocol)
       end
+
+      include_examples "roundtrips string"
     end
 
     context 'when the scheme is invalid' do
@@ -258,15 +266,6 @@ describe Mongo::URI do
       end
     end
 
-    context 'no slash after hosts, and options' do
-
-      let(:string) { 'mongodb://example.com?tls=true' }
-
-      it 'raises an error' do
-        expect { uri }.to raise_error(Mongo::Error::InvalidURI, %r,MongoDB URI must have a slash \(/\) after the hosts if options are given,)
-      end
-    end
-
     context 'mongodb://example.com/?w' do
 
       let(:string) { 'mongodb://example.com/?w' }
@@ -363,6 +362,15 @@ describe Mongo::URI do
     end
   end
 
+  describe "#to_s" do
+    context "string is a uri" do
+      let(:string) { 'mongodb://localhost:27017' }
+      it "returns the original string" do
+        expect(uri.to_s).to eq(string)
+      end
+    end
+  end
+
   describe '#servers' do
     let(:string) { "#{scheme}#{servers}" }
 
@@ -372,6 +380,8 @@ describe Mongo::URI do
       it 'returns an array with the parsed server' do
         expect(uri.servers).to eq([servers])
       end
+
+      include_examples "roundtrips string"
     end
 
     context 'single server with port' do
@@ -380,6 +390,8 @@ describe Mongo::URI do
       it 'returns an array with the parsed server' do
         expect(uri.servers).to eq([servers])
       end
+
+      include_examples "roundtrips string"
     end
 
     context 'numerical ipv4 server' do
@@ -388,6 +400,8 @@ describe Mongo::URI do
       it 'returns an array with the parsed server' do
         expect(uri.servers).to eq([servers])
       end
+
+      include_examples "roundtrips string"
     end
 
     context 'numerical ipv6 server' do
@@ -396,6 +410,8 @@ describe Mongo::URI do
       it 'returns an array with the parsed server' do
         expect(uri.servers).to eq([servers])
       end
+
+      include_examples "roundtrips string"
     end
 
     context 'unix socket server' do
@@ -404,6 +420,8 @@ describe Mongo::URI do
       it 'returns an array with the parsed server' do
         expect(uri.servers).to eq([URI::DEFAULT_PARSER.unescape(servers)])
       end
+
+      include_examples "roundtrips string"
     end
 
     context 'multiple servers' do
@@ -412,6 +430,8 @@ describe Mongo::URI do
       it 'returns an array with the parsed servers' do
         expect(uri.servers).to eq(servers.split(','))
       end
+
+      include_examples "roundtrips string"
     end
 
     context 'multiple servers with ports' do
@@ -420,6 +440,8 @@ describe Mongo::URI do
       it 'returns an array with the parsed servers' do
         expect(uri.servers).to eq(servers.split(','))
       end
+
+      include_examples "roundtrips string"
     end
   end
 
@@ -447,6 +469,8 @@ describe Mongo::URI do
     it 'includes the password in the options' do
       expect(options[:password]).to eq(password)
     end
+
+    include_examples "roundtrips string"
   end
 
   describe '#credentials' do
@@ -459,6 +483,10 @@ describe Mongo::URI do
 
       it 'returns the username' do
         expect(uri.credentials[:user]).to eq(user)
+      end
+
+      it "roundtrips string without the colon" do
+        expect(uri.to_s).to eq("mongodb://tyler@localhost")
       end
     end
 
@@ -473,6 +501,8 @@ describe Mongo::URI do
       it 'returns the password' do
         expect(uri.credentials[:password]).to eq(password)
       end
+
+      include_examples "roundtrips string"
     end
   end
 
@@ -485,6 +515,8 @@ describe Mongo::URI do
       it 'returns the database name' do
         expect(uri.database).to eq(db)
       end
+
+      include_examples "roundtrips string"
     end
   end
 
@@ -498,6 +530,8 @@ describe Mongo::URI do
       it 'returns an empty hash' do
         expect(uri.uri_options).to be_empty
       end
+
+      include_examples "roundtrips string"
     end
 
     context 'write concern options provided' do
@@ -514,6 +548,8 @@ describe Mongo::URI do
           client = new_local_client_nmio(string)
           expect(client.options[:write_concern]).to eq(concern)
         end
+
+        include_examples "roundtrips string"
       end
 
       context 'w=majority' do
@@ -528,6 +564,8 @@ describe Mongo::URI do
           client = new_local_client_nmio(string)
           expect(client.options[:write_concern]).to eq(concern)
         end
+
+        include_examples "roundtrips string"
       end
 
       context 'journal' do
@@ -542,6 +580,8 @@ describe Mongo::URI do
           client = new_local_client_nmio(string)
           expect(client.options[:write_concern]).to eq(concern)
         end
+
+        include_examples "roundtrips string"
       end
 
       context 'fsync' do
@@ -556,6 +596,8 @@ describe Mongo::URI do
           client = new_local_client_nmio(string)
           expect(client.options[:write_concern]).to eq(concern)
         end
+
+        include_examples "roundtrips string"
       end
 
       context 'wtimeoutMS' do
@@ -570,6 +612,10 @@ describe Mongo::URI do
         it 'sets the options on a client created with the uri' do
           client = new_local_client_nmio(string)
           expect(client.options[:write_concern]).to eq(concern)
+        end
+
+        it "roundtrips the string with camelCase" do
+          expect(uri.to_s).to eq("mongodb://localhost/?w=2&wTimeoutMS=1234")
         end
       end
     end
@@ -589,6 +635,8 @@ describe Mongo::URI do
           client = new_local_client_nmio(string)
           expect(client.options[:read]).to eq(read)
         end
+
+        include_examples "roundtrips string"
       end
 
       context 'primaryPreferred' do
@@ -603,6 +651,8 @@ describe Mongo::URI do
           client = new_local_client_nmio(string)
           expect(client.options[:read]).to eq(read)
         end
+
+        include_examples "roundtrips string"
       end
 
       context 'secondary' do
@@ -617,6 +667,8 @@ describe Mongo::URI do
           client = new_local_client_nmio(string)
           expect(client.options[:read]).to eq(read)
         end
+
+        include_examples "roundtrips string"
       end
 
       context 'secondaryPreferred' do
@@ -631,6 +683,8 @@ describe Mongo::URI do
           client = new_local_client_nmio(string)
           expect(client.options[:read]).to eq(read)
         end
+
+        include_examples "roundtrips string"
       end
 
       context 'nearest' do
@@ -645,6 +699,8 @@ describe Mongo::URI do
           client = new_local_client_nmio(string)
           expect(client.options[:read]).to eq(read)
         end
+
+        include_examples "roundtrips string"
       end
     end
 
@@ -667,6 +723,8 @@ describe Mongo::URI do
           client = new_local_client_nmio(string)
           expect(client.options[:read]).to eq(read)
         end
+
+        include_examples "roundtrips string"
       end
 
       context 'multiple read preference tag sets' do
@@ -686,6 +744,8 @@ describe Mongo::URI do
           client = new_local_client_nmio(string)
           expect(client.options[:read]).to eq(read)
         end
+
+        include_examples "roundtrips string"
       end
     end
 
@@ -734,6 +794,10 @@ describe Mongo::URI do
             client = new_local_client_nmio(string)
             expect(client.read_preference).to eq(BSON::Document.new(mode: :secondary))
           end
+
+          it "returns the string without the dropped option" do
+            expect(uri.to_s).to eq("mongodb://localhost/?readPreference=secondary")
+          end
         end
       end
     end
@@ -750,6 +814,8 @@ describe Mongo::URI do
         client = new_local_client_nmio(string)
         expect(client.options[:replica_set]).to eq(rs_name)
       end
+
+      include_examples "roundtrips string"
     end
 
     context 'auth mechanism provided' do
@@ -776,6 +842,8 @@ describe Mongo::URI do
           client = new_local_client_nmio(string.downcase)
           expect(client.options[:auth_mech]).to eq(expected)
         end
+
+        include_examples "roundtrips string"
 
         context 'when mechanism_properties are provided' do
           let(:options) { "authMechanism=#{mechanism}&authMechanismProperties=CANONICALIZE_HOST_NAME:true" }
@@ -805,6 +873,8 @@ describe Mongo::URI do
           client = new_local_client_nmio(string.downcase)
           expect(client.options[:auth_mech]).to eq(expected)
         end
+
+        include_examples "roundtrips string"
 
         context 'when mechanism_properties are provided' do
           let(:options) { "authMechanism=#{mechanism}&authMechanismProperties=CANONICALIZE_HOST_NAME:true" }
@@ -837,6 +907,8 @@ describe Mongo::URI do
           expect(client.options[:auth_mech]).to eq(expected)
         end
 
+        include_examples "roundtrips string"
+
         context 'when auth source is invalid' do
           let(:options) { "authMechanism=#{mechanism}&authSource=foo" }
 
@@ -854,11 +926,17 @@ describe Mongo::URI do
             expect(client.options[:auth_mech_properties]).to eq({ 'canonicalize_host_name' => true, 'service_name' => 'other' })
           end
 
+          include_examples "roundtrips string"
+
           context 'when a mapping value is missing' do
             let(:options) { "authMechanism=#{mechanism}&authMechanismProperties=SERVICE_NAME:,CANONICALIZE_HOST_NAME:" }
 
             it 'sets the options to defaults' do
               expect(client.options[:auth_mech_properties]).to eq({ 'service_name' => 'mongodb' })
+            end
+
+            it "roundtrips the string" do
+              expect(uri.to_s).to eq("mongodb://tyler:s3kr4t@localhost/?authMechanism=GSSAPI")
             end
           end
 
@@ -867,6 +945,10 @@ describe Mongo::URI do
 
             it 'only sets the present value' do
               expect(client.options[:auth_mech_properties]).to eq({ 'service_name' => 'foo' })
+            end
+
+            it "roundtrips the string" do
+              expect(uri.to_s).to eq("mongodb://tyler:s3kr4t@localhost/?authMechanism=GSSAPI&authMechanismProperties=SERVICE_NAME:foo")
             end
           end
         end
@@ -889,6 +971,8 @@ describe Mongo::URI do
           client = new_local_client_nmio(string.downcase)
           expect(client.options[:auth_mech]).to eq(expected)
         end
+
+        include_examples "roundtrips string"
 
         context 'when mechanism_properties are provided' do
           let(:options) { "authMechanism=#{mechanism}&authMechanismProperties=CANONICALIZE_HOST_NAME:true" }
@@ -920,6 +1004,8 @@ describe Mongo::URI do
           expect(client.options[:auth_mech]).to eq(expected)
         end
 
+        include_examples "roundtrips string"
+
         context 'when auth source is invalid' do
           let(:options) { "authMechanism=#{mechanism}&authSource=foo" }
 
@@ -938,6 +1024,8 @@ describe Mongo::URI do
             expect(client.options[:auth_mech]).to eq(expected)
             expect(client.options[:user]).to be_nil
           end
+
+          include_examples "roundtrips string"
         end
 
         context 'when a password is provided' do
@@ -967,7 +1055,7 @@ describe Mongo::URI do
       let(:string) { "#{scheme}#{credentials}@#{servers}/" }
 
       context 'with no credentials' do
-        let(:string) { "#{scheme}#{servers}/" }
+        let(:string) { "#{scheme}#{servers}" }
 
         it 'sets user and password as nil' do
           expect(uri.credentials[:user]).to be_nil
@@ -979,6 +1067,8 @@ describe Mongo::URI do
           expect(client.options[:user]).to be_nil
           expect(client.options[:password]).to be_nil
         end
+
+        include_examples "roundtrips string"
       end
 
       context 'with empty credentials' do
@@ -1011,6 +1101,8 @@ describe Mongo::URI do
           client = new_local_client_nmio(string)
           expect(client.options[:auth_source]).to eq(source)
         end
+
+        include_examples "roundtrips string"
       end
     end
 
@@ -1047,6 +1139,7 @@ describe Mongo::URI do
         end
 
         include_examples 'sets options in the expected manner'
+        include_examples "roundtrips string"
       end
 
       context 'canonicalize_host_name' do
@@ -1069,6 +1162,7 @@ describe Mongo::URI do
         end
 
         include_examples 'sets options in the expected manner'
+        include_examples "roundtrips string"
       end
 
       context 'service_realm' do
@@ -1091,6 +1185,7 @@ describe Mongo::URI do
         end
 
         include_examples 'sets options in the expected manner'
+        include_examples "roundtrips string"
       end
 
       context 'multiple properties' do
@@ -1121,6 +1216,7 @@ describe Mongo::URI do
         end
 
         include_examples 'sets options in the expected manner'
+        include_examples "roundtrips string"
       end
     end
 
@@ -1130,6 +1226,8 @@ describe Mongo::URI do
       it 'sets the the connect timeout' do
         expect(uri.uri_options[:connect_timeout]).to eq(4.567)
       end
+
+      include_examples "roundtrips string"
     end
 
     context 'socketTimeoutMS' do
@@ -1138,6 +1236,8 @@ describe Mongo::URI do
       it 'sets the socket timeout' do
         expect(uri.uri_options[:socket_timeout]).to eq(8.910)
       end
+
+      include_examples "roundtrips string"
     end
 
     context 'when providing serverSelectionTimeoutMS' do
@@ -1147,6 +1247,8 @@ describe Mongo::URI do
       it 'sets the the connect timeout' do
         expect(uri.uri_options[:server_selection_timeout]).to eq(3.561)
       end
+
+      include_examples "roundtrips string"
     end
 
     context 'when providing localThresholdMS' do
@@ -1156,6 +1258,8 @@ describe Mongo::URI do
       it 'sets the the connect timeout' do
         expect(uri.uri_options[:local_threshold]).to eq(3.561)
       end
+
+      include_examples "roundtrips string"
     end
 
     context 'when providing maxPoolSize' do
@@ -1166,6 +1270,8 @@ describe Mongo::URI do
       it 'sets the max pool size option' do
         expect(uri.uri_options[:max_pool_size]).to eq(max_pool_size)
       end
+
+      include_examples "roundtrips string"
     end
 
     context 'when providing minPoolSize' do
@@ -1176,6 +1282,8 @@ describe Mongo::URI do
       it 'sets the min pool size option' do
         expect(uri.uri_options[:min_pool_size]).to eq(min_pool_size)
       end
+
+      include_examples "roundtrips string"
     end
 
     context 'when providing srvMaxHosts with non-SRV URI' do
@@ -1211,6 +1319,8 @@ describe Mongo::URI do
       it 'sets the wait queue timeout option' do
         expect(uri.uri_options[:wait_queue_timeout]).to eq(0.5)
       end
+
+      include_examples "roundtrips string"
     end
 
     context 'ssl' do
@@ -1222,6 +1332,10 @@ describe Mongo::URI do
         it 'sets the ssl option to true' do
           expect(uri.uri_options[:ssl]).to be true
         end
+
+        it "returns the ssl as tls from to_s" do
+          expect(uri.to_s).to eq("mongodb://localhost/?tls=true")
+        end
       end
 
       context 'false' do
@@ -1229,6 +1343,10 @@ describe Mongo::URI do
 
         it 'sets the ssl option to false' do
           expect(uri.uri_options[:ssl]).to be false
+        end
+
+        it "returns the ssl as tls from to_s" do
+          expect(uri.to_s).to eq("mongodb://localhost/?tls=false")
         end
       end
     end
@@ -1238,6 +1356,10 @@ describe Mongo::URI do
 
       it 'do not overshadow top level options' do
         expect(uri.uri_options).not_to be_empty
+      end
+
+      it "returns the ssl as tls from to_s" do
+        expect(uri.to_s).to eq("mongodb://localhost/?w=1&tls=true")
       end
     end
 
@@ -1275,6 +1397,10 @@ describe Mongo::URI do
         client = new_local_client_nmio(string)
         expect(client.options[:app_name]).to eq('uri_test')
       end
+
+      it "roundtrips the string with camelCase" do
+        expect(uri.to_s).to eq("mongodb://localhost/?appName=uri_test")
+      end
     end
 
     context 'when a supported compressors option is provided' do
@@ -1284,6 +1410,8 @@ describe Mongo::URI do
         client = new_local_client_nmio(string)
         expect(client.options[:compressors]).to eq(['zlib'])
       end
+
+      include_examples "roundtrips string"
     end
 
     context 'when a non-supported compressors option is provided' do
@@ -1297,6 +1425,8 @@ describe Mongo::URI do
         expect(Mongo::Logger.logger).to receive(:warn)
         expect(client.options[:compressors]).to be_nil
       end
+
+      include_examples "roundtrips string"
     end
 
     context 'when a zlibCompressionLevel option is provided' do
@@ -1306,6 +1436,8 @@ describe Mongo::URI do
         client = new_local_client_nmio(string)
         expect(client.options[:zlib_compression_level]).to eq(6)
       end
+
+      include_examples "roundtrips string"
     end
   end
 end

@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2014-2020 MongoDB Inc.
 #
@@ -195,6 +195,12 @@ module Mongo
             connection_global_id: kill_spec.connection_global_id,
           }
           op.execute(server, context: Operation::Context.new(options: options))
+
+          if session = kill_spec.session
+            if session.implicit?
+              session.end_session
+            end
+          end
         end
       end
       alias :execute :kill_cursors

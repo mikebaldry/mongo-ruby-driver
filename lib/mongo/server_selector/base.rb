@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2020 MongoDB Inc.
 #
@@ -164,6 +164,10 @@ module Mongo
       #   for mongos pinning. Added in version 2.10.0.
       # @param [ true | false ] write_aggregation Whether we need a server that
       #   supports writing aggregations (e.g. with $merge/$out) on secondaries.
+      # @param [ Array<Server> ] deprioritized A list of servers that should
+      #   be selected from only if no other servers are available. This is
+      #   used to avoid selecting the same server twice in a row when
+      #   retrying a command.
       #
       # @return [ Mongo::Server ] A server matching the server preference.
       #
@@ -174,7 +178,16 @@ module Mongo
       #   lint mode is enabled.
       #
       # @since 2.0.0
-      def select_server(cluster, ping = nil, session = nil, write_aggregation: false)
+      def select_server(cluster, ping = nil, session = nil, write_aggregation: false, deprioritized: [])
+        select_server_impl(cluster, ping, session, write_aggregation, deprioritized).tap do |server|
+          if Lint.enabled? && !server.pool.ready?
+            raise Error::LintError, 'Server selector returning a server with a pool which is not ready'
+          end
+        end
+      end
+
+      # Parameters and return values are the same as for select_server.
+      private def select_server_impl(cluster, ping, session, write_aggregation, deprioritized)
         if cluster.topology.is_a?(Cluster::Topology::LoadBalanced)
           return cluster.servers.first
         end
@@ -245,7 +258,19 @@ module Mongo
 =end
 
         loop do
-          server = try_select_server(cluster, write_aggregation: write_aggregation)
+          if Lint.enabled?
+            cluster.servers.each do |server|
+              # TODO: Add this back in RUBY-3174.
+              # if !server.unknown? && !server.connected?
+              #   raise Error::LintError, "Server #{server.summary} is known but is not connected"
+              # end
+              if !server.unknown? && !server.pool.ready?
+                raise Error::LintError, "Server #{server.summary} is known but has non-ready pool"
+              end
+            end
+          end
+
+          server = try_select_server(cluster, write_aggregation: write_aggregation, deprioritized: deprioritized)
 
           if server
             unless cluster.topology.compatible?
@@ -300,11 +325,15 @@ module Mongo
       #   an eligible server.
       # @param [ true | false ] write_aggregation Whether we need a server that
       #   supports writing aggregations (e.g. with $merge/$out) on secondaries.
+      # @param [ Array<Server> ] deprioritized A list of servers that should
+      #   be selected from only if no other servers are available. This is
+      #   used to avoid selecting the same server twice in a row when
+      #   retrying a command.
       #
       # @return [ Server | nil ] A suitable server, if one exists.
       #
       # @api private
-      def try_select_server(cluster, write_aggregation: false)
+      def try_select_server(cluster, write_aggregation: false, deprioritized: [])
         servers = if write_aggregation && cluster.replica_set?
           # 1. Check if ALL servers in cluster support secondary writes.
           is_write_supported = cluster.servers.reduce(true) do |res, server|
@@ -326,7 +355,7 @@ module Mongo
         # by the selector (e.g. for secondary preferred, the first
         # server may be a secondary and the second server may be primary)
         # and we should take the first server here respecting the order
-        server = servers.first
+        server = suitable_server(servers, deprioritized)
 
         if server
           if Lint.enabled?
@@ -396,6 +425,24 @@ module Mongo
       end
 
       private
+
+      # Returns a server from the list of servers that is suitable for
+      # executing the operation.
+      #
+      # @param [ Array<Server> ] servers The candidate servers.
+      # @param [ Array<Server> ] deprioritized A list of servers that should
+      #  be selected from only if no other servers are available.
+      #
+      # @return [ Server | nil ] The suitable server or nil if no suitable
+      #  server is available.
+      def suitable_server(servers, deprioritized)
+        preferred = servers - deprioritized
+        if preferred.empty?
+          servers.first
+        else
+          preferred.first
+        end
+      end
 
       # Convert this server preference definition into a format appropriate
       #   for sending to a MongoDB server (i.e., as a command field).
@@ -604,9 +651,9 @@ module Mongo
         if cluster.server_selection_semaphore
           # Since the semaphore may have been signaled between us checking
           # the servers list earlier and the wait call below, we should not
-          # wait for the full remaining time - wait for up to 1 second, then
+          # wait for the full remaining time - wait for up to 0.5 second, then
           # recheck the state.
-          cluster.server_selection_semaphore.wait([time_remaining, 1].min)
+          cluster.server_selection_semaphore.wait([time_remaining, 0.5].min)
         else
           if Lint.enabled?
             raise Error::LintError, 'Waiting for server selection without having a server selection semaphore'

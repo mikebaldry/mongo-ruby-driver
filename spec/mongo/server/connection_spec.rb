@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'spec_helper'
 
@@ -265,6 +265,10 @@ describe Mongo::Server::Connection do
       context 'when #authenticate! raises an exception' do
         require_auth
 
+        # because the mock/stub flow here doesn't cover the flow used by
+        # the X.509 authentication mechanism...
+        forbid_x509_auth
+
         let(:server_options) do
           Mongo::Client.canonicalize_ruby_options(
             SpecConfig.instance.all_test_options,
@@ -410,7 +414,7 @@ describe Mongo::Server::Connection do
           end
 
           #it_behaves_like 'disconnects connection pool'
-          it_behaves_like 'keeps server type and topology'
+          it_behaves_like 'marks server unknown'
         end
 
         # need a separate context here, otherwise disconnect expectation
@@ -886,13 +890,13 @@ describe Mongo::Server::Connection do
       end
 
       it 'times out and raises SocketTimeoutError' do
-        start = Time.now
+        start = Mongo::Utils.monotonic_time
         begin
           Timeout::timeout(1.5 + 15) do
             client[authorized_collection.name].find("$where" => "sleep(2000) || true").first
           end
         rescue => ex
-          end_time = Time.now
+          end_time = Mongo::Utils.monotonic_time
           expect(ex).to be_a(Mongo::Error::SocketTimeoutError)
           expect(ex.message).to match(/Took more than 1.5 seconds to receive data/)
         else
@@ -965,6 +969,11 @@ describe Mongo::Server::Connection do
               )
             )
           )
+        end
+
+        before do
+          allow(server).to receive(:unknown?).and_return(false)
+          allow(server2).to receive(:unknown?).and_return(false)
         end
 
         it 'ids do not share namespace' do
@@ -1227,6 +1236,10 @@ describe Mongo::Server::Connection do
     context 'non-lb' do
       require_topology :single, :replica_set, :sharded
 
+      before do
+        allow(server).to receive(:unknown?).and_return(false)
+      end
+
       it 'is set' do
         server.with_connection do |conn|
           conn.service_id.should be nil
@@ -1236,6 +1249,10 @@ describe Mongo::Server::Connection do
 
       context 'clean slate' do
         clean_slate
+
+        before do
+          allow(server).to receive(:unknown?).and_return(false)
+        end
 
         it 'starts from 1' do
           server.with_connection do |conn|

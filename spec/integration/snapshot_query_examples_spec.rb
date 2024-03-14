@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'spec_helper'
 
@@ -17,17 +17,17 @@ describe 'Snapshot Query Examples' do
   context "Snapshot Query Example 1" do
     before do
       client = authorized_client.use('pets')
-      client['cats'].delete_many
-      client['dogs'].delete_many
+      client['cats', write_concern: { w: :majority }].delete_many
+      client['dogs', write_concern: { w: :majority }].delete_many
 
-      client['cats'].insert_one(
+      client['cats', write_concern: { w: :majority }].insert_one(
         name: "Whiskers",
         color: "white",
         age: 10,
         adoptable: true
       )
 
-      client['dogs'].insert_one(
+      client['dogs', write_concern: { w: :majority }].insert_one(
         name: "Pebbles",
         color: "Brown",
         age: 10,
@@ -71,11 +71,13 @@ describe 'Snapshot Query Examples' do
   end
 
   context "Snapshot Query Example 2" do
+    retry_test
+
     before do
       client = authorized_client.use('retail')
-      client['sales'].delete_many
+      client['sales', write_concern: { w: :majority }].delete_many
 
-      client['sales'].insert_one(
+      client['sales', write_concern: { w: :majority }].insert_one(
         shoeType: "boot",
         price: 30,
         saleDate: Time.now

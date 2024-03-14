@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'spec_helper'
 
@@ -16,7 +16,8 @@ describe 'Server::Monitor' do
     {heartbeat_frequency: 1}
   end
 
-  it 'refreshes server descriptions in background', retry: 3 do
+  retry_test
+  it 'refreshes server descriptions in background' do
     server = client.cluster.next_primary
 
     expect(server.description).not_to be_unknown

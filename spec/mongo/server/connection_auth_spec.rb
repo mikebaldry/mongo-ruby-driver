@@ -1,10 +1,12 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'spec_helper'
 
 # these tests fail intermittently in evergreen
-describe Mongo::Server::Connection, retry: 3 do
+describe Mongo::Server::Connection do
+  retry_test
+
   let(:address) do
     Mongo::Address.new(SpecConfig.instance.addresses.first)
   end

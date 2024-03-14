@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'spec_helper'
 
@@ -14,21 +14,6 @@ describe Mongo::Session::SessionPool do
       # that cause cluster time to be updated. This also necessitates clean
       # state requirement.
       authorized_client.close
-    end
-  end
-
-  describe '.create' do
-
-    let!(:pool) do
-      described_class.create(cluster)
-    end
-
-    it 'creates a session pool' do
-      expect(pool).to be_a(Mongo::Session::SessionPool)
-    end
-
-    it 'adds the pool as an instance variable on the cluster' do
-      expect(cluster.session_pool).to eq(pool)
     end
   end
 
@@ -181,7 +166,7 @@ describe Mongo::Session::SessionPool do
   describe '#end_sessions' do
 
     let(:pool) do
-      described_class.create(client.cluster)
+      client.cluster.session_pool
     end
 
     let!(:session_a) do

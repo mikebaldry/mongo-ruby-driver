@@ -20,7 +20,16 @@ gem-private_key.pem
 nbproject
 tmp
 sandbox/*
+data/*
 .byebug_history
 gemfiles/*.gemfile.lock
 .env.private*
 .env
+build
+profile/data
+secrets-export.sh
+secrets-expansion.yml
+atlas-expansion.yml
+# AWS SAM-generated files
+spec/faas/ruby-sam-app/.aws-sam
+spec/faas/ruby-sam-app/events/event.json

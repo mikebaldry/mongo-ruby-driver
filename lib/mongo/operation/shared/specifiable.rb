@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2014-2020 MongoDB Inc.
 #
@@ -258,6 +258,13 @@ module Mongo
       # @since 2.0.0
       def index
         spec[INDEX]
+      end
+
+      # Get the index id from the spec.
+      #
+      # @return [ String ] The index id.
+      def index_id
+        spec[:index_id]
       end
 
       # Get the index name from the spec.

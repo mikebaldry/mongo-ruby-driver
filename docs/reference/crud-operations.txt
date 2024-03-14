@@ -93,7 +93,7 @@ Specify a ``Decimal128`` number
 .. versionadded:: 3.4
 
 :manual:`Decimal128</tutorial/model-monetary-data>` is a
-:doc:`BSON datatype </bson-tutorials>`
+:doc:`BSON datatype </tutorials/bson>`
 that employs 128-bit decimal-based floating-point values capable
 of emulating decimal rounding with exact precision. This
 functionality is intended for applications that handle
@@ -360,6 +360,15 @@ Additional Query Operations
   Note that unlike ``count_documents``, ``estimated_document_count`` does not
   accept a filter.
 
+  The ``count`` server command is used to implement ``estimated_document_count``.
+  More information can be found via `Count: Behavior <https://www.mongodb.com/docs/manual/reference/command/count/#behavior>`_.
+
+  Due to an oversight in MongoDB versions 5.0.0-5.0.7, the ``count`` command,
+  which ``estimated_document_count`` uses in its implementation, was not
+  included in v1 of the Stable API. Therefore, users of the Stable API with
+  ``estimated_document_count`` are recommended to upgrade their server version to
+  5.0.8+ or set ``api_strict: false`` to avoid encountering errors.
+
 .. code-block:: ruby
 
   client = Mongo::Client.new([ '127.0.0.1:27017' ], :database => 'music')
@@ -449,7 +458,7 @@ part of the command:
 
 .. code-block:: ruby
 
-  client.database.command(collstats: 'test', readConcern: {level: :majority})
+  client.database.command(dbStats: 1, readConcern: {level: :majority})
 
 
 .. _read-preference:
@@ -495,7 +504,7 @@ option when a command is run on a database:
                                     } )
 
   # Set read preference for a given command
-  client.database.command( { collstats: 'test' }, read: { mode: secondary,
+  client.database.command( { dbStats: 1 }, read: { mode: secondary,
                                                        tag_sets: [ { 'dc' => 'nyc' } ] } )
 
 Read preference can also be set for specific operations on a collection
@@ -964,10 +973,22 @@ Note that writeConcern here is part of the operation rather than options,
 and the syntax is the camel case one that MongoDB server recognizes, not the
 underscore one that Ruby driver uses.
 
+.. _dots-dollars-in-field-names:
+
+Field Names with Dots/Periods (.) and Dollar Signs ($)
+======================================================
+
+Starting in Mongo Ruby Driver version 2.18.0, the ability to work with fields
+that begin with dollar signs ($) and fields with dots/periods (.) in them is available.
+In Driver version 2.17.0 and earlier, any attempt to work with dotted or dollared
+fields would result in an ``IllegalKey`` error being raised. See the MongoDB docs
+on `Field Names with Periods (.) and Dollar Signs ($) <https://www.mongodb.com/docs/manual/core/dot-dollar-considerations/>`_
+for more information on working with these types of fields.
+
 A Note about the BSON Symbol type
 =================================
 
-Because the BSON specification deprecated the BSON symbol type, the `bson` gem
+Because the BSON specification deprecated the BSON symbol type, the ``bson`` gem
 will serialize Ruby symbols into BSON strings when used on its own. However, in
 order to maintain backwards compatibility with older datasets, the Ruby driver
 overrides this behavior to serialize Ruby symbols as BSON symbols. This is

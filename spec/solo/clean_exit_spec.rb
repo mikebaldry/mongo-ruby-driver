@@ -1,17 +1,15 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'mongo'
+require 'lite_spec_helper'
 
 describe 'Clean exit' do
-
-  before(:all) do
-    unless %w(1 true yes).include?(ENV['SOLO'])
-      skip 'Set SOLO=1 in environment to run solo tests'
-    end
-  end
+  require_external_connectivity
+  require_solo
 
   context 'with SRV URI' do
+
     let(:uri) do
       'mongodb+srv://test1.test.build.10gen.cc/?tls=false'
     end

@@ -17,28 +17,104 @@ comprehensive list of changes in each version of the driver and the
 for the complete list of changes, including those internal to the driver and
 its test suite.
 
-2.18
+
+.. _release-notes-2.19:
+
+2.19
 ====
 
-This release of the Ruby driver supports MongoDB version 5.2. it also
-deprecates JRuby support. JRuby support will be removed in a future version
-of the driver.
+This release of the Ruby driver supports MongoDB version 7.0. The Ruby driver
+now supports Ruby 3.2. Ruby 2.5 and 2.6 are now deprecated.
 
 This release includes the following new features:
 
+- The driver now limits the number of connections established by a connection
+  pool simultaneously. By default the limit is 2. The limit can be configured
+  with the ``:max_connecting`` option of the ``Mongo::Client`` constructor.
+  The default should be sufficient for most applications. However, if your
+  application is using a large number of threads, you may need to increase
+  the limit.
+- Added support for automatic AWS credentials retrieval and authentication
+  with temporary credentials when AWS KMS is used for client side encryption.
+- Added support for automatic GCP credentials retrieval when Google Cloud Key
+  Management is used for client side encryption.
+- Added support the Azure VM-assigned Managed Identity for Automatic KMS Credentials
+  when Azure Key Vault is used for client side encryption.
+- `Queryable Encryption <https://www.mongodb.com/docs/upcoming/core/queryable-encryption/queryable-encryption/>`_ support is extended.
+- Added support for Queryable Encryption Range Indexes.
+- A `crypt_shared <https://www.mongodb.com/docs/manual/core/queryable-encryption/reference/shared-library/#download-the-automatic-encryption-shared-library>`_
+  library can be now used instead of ``mongocryptd``.
+- Added support for AWS IAM Roles for service accounts, EKS in particular.
+- AWS Credentials are now cached when possible.
+- Added support for creating and managing `Atlas search indexes <https://www.mongodb.com/docs/atlas/atlas-search/>`_ via the
+  Ruby driver.
+
+.. _release-notes-2.18:
+
+2.18
+====
+
+This release of the Ruby driver supports MongoDB version 5.2 and 6.0.
+
+This release includes the following new features:
+
+- Added support for `queryable encryption <https://www.mongodb.com/docs/upcoming/core/queryable-encryption/queryable-encryption/>`_.
 - Added support for Azure Key Vault, Google Cloud Key Management, and any
   KMIP compliant Key Management System to be used as master key storage for
   client side encryption.
-- The DBRef class has been moved to bson-ruby and requires bson-ruby 4.13.0
-  or greater. For backwards compatibility, BSON::DBRef is aliased as Mongo::DBRef.
-  The BSON::DBRef class derives from BSON::Document, unlike Mongo::DBRef which
-  derived from Object. BSON::DBRef retains all fields, unlike Mongo::DBRef which
-  only allowed $ref, $id, and $db. BSON::DBRef also reorders the fields if
-  necessary to place $ref, $id, and $db first, in that order.
+- It is now possible to provide the :ref:`path to a schema map file <schema-map-path>`
+  instead of the entire schema map as an object.
+- The driver now implements the :ref:`feature flag <feature-flags>` mechanism
+  for incompatible changes and bug fixes. Changes gated behind feature flags
+  for 2.18 are passing view filter and options to ``aggregate`` and validation
+  of correct usage of ``update`` vs ``replace`` methods, as described below.
+- Added the ``validate_update_replace`` feature flag which validates the
+  parameters to update and replace operations. If this flag is turned on, an
+  error will be raised on an invalid update or replacement document.
+- Added the ``broken_view_options`` feature flag which allows the view options
+  to be correctly propagated to the ``aggregate``, ``count``, ``count_documents``,
+  ``distinct``, and ``estimated_document_count`` mehods. When this flag is
+  switched on, the view options will be ignored in those methods.
+- The driver now permits :ref:`inserting documents with dollar-prefixed and
+  dotted keys <dots-dollars-in-field-names>`.
 - CRUD methods, methods for listing databases, collection, and indexes management
-  methods now support a new option ``comment``. This option enables users to
+  methods now support a new option ``:comment``. This option enables users to
   specify an arbitrary comment to help trace the operation through the
   database profiler, currentOp and logs.
+- The ``estimated_document_count`` method is now using the ``count`` server
+  command instead of ``$collStats`` aggregation pipeline stage, to support
+  operation on views. Applications using the Stable API should upgrade to
+  server versions 5.0.8 (if using MongoDB 5.0) or 5.3.2 (if using MongoDB
+  5.1/5.2/5.3) or newer to use the ``count`` command when API strict is enabled,
+  or avoid setting ``api_strict: true`` when constructing ``Mongo::Client``
+  instances with server versions 5.0.0-5.0.7 and 5.1.0-5.3.1.
+- The DBRef class has been moved to ``bson-ruby``. For backwards compatibility,
+  ``BSON::DBRef`` is aliased as ``Mongo::DBRef``. The ``BSON::DBRef`` class
+  derives from ``BSON::Document``, unlike the legacy ``Mongo::DBRef`` which
+  derived from ``Object``. ``BSON::DBRef`` retains all attributes passed into
+  its constructor, unlike ``Mongo::DBRef`` which only allowed ``$ref``,
+  ``$id``, and ``$db``. ``BSON::DBRef`` also reorders the fields if
+  necessary to place ``$ref``, ``$id``, and ``$db`` first, in that order, as
+  required by the MongoDB server.
+- ``BulkWrite::Result`` class now has the ``acknowledged?`` attribute.
+- Providing an empty array of operations to the bulk write is now an error.
+- BSON serialization performance has been improved.
+- :ref:`ActiveJob middleware <query-cache-active-job-middleware>` was added to
+  the query cache.
+- ``:authorized_collections`` options is recognized when listing collections.
+- ``:wildcard_projection`` option was added to the allowed index specification.
+- Added ``:srv_max_hosts``/``srvMaxHosts`` Ruby and URI options to limit how
+  many mongos routers the driver will establish connections to.
+- Custom SRV service names are now supported with the ``:srv_service_name``
+  Ruby option and the ``srvServiceName`` URI option.
+- When 0 is given as the max connection pool size, it is now interpreted to
+  mean no limit.
+- The default maximum connection pool size has been increased to 20 from 5.
+
+This release adds supports for JRuby 9.3.
+
+
+.. _release-notes-2.17:
 
 2.17
 ====
@@ -62,6 +138,9 @@ The following non-breaking changes were made:
 - mapReduce command is now deprecated.
 - Avoid tight looping in push monitor
 
+
+.. _release-notes-2.16:
+
 2.16
 ====
 
@@ -78,6 +157,8 @@ The following minor improvement has been made:
 This release of the Ruby driver increases the minimum required Ruby version
 to 2.4 and deprecates support for MongoDB server versions below 3.6.
 
+
+.. _release-notes-2.15:
 
 2.15
 ====
@@ -127,6 +208,8 @@ The following smaller improvements have been made:
 - Server selection timeout for ``mongocryptd`` has been increased to 10 seconds.
 
 
+.. _release-notes-2.14:
+
 2.14
 ====
 
@@ -158,6 +241,8 @@ The following smaller improvements have been made:
 
 Support for Ruby versions 2.3 and 2.4 has been deprecated as of this release.
 
+
+.. _release-notes-2.13:
 
 2.13
 ====
@@ -201,6 +286,8 @@ The following smaller improvements have been made:
   can now be configured.
 
 
+.. _release-notes-2.12:
+
 2.12
 ====
 
@@ -214,6 +301,8 @@ The following smaller improvements have been made:
 - Authentication exceptions now include server information to aid in
   troubleshooting.
 
+
+.. _release-notes-2.11:
 
 2.11
 ====
@@ -244,6 +333,8 @@ This release of the Ruby driver increases the minimum required Ruby version
 to 2.3, as well as minimum supported JRuby version to 9.2.
 
 
+.. _release-notes-2.10:
+
 2.10
 ====
 
@@ -268,6 +359,8 @@ The following smaller improvements have been made:
 
 Support for Ruby versions less than 2.3 is deprecated in this release.
 
+
+.. _release-notes-2.9:
 
 2.9
 ===

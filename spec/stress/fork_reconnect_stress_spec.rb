@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'spec_helper'
 
@@ -27,20 +27,20 @@ describe 'fork reconnect' do
       client['foo'].insert_one(test: 1)
 
       pids = []
-      deadline = Time.now + 5
+      deadline = Mongo::Utils.monotonic_time + 5
       1.upto(10) do
         if pid = fork
           pids << pid
         else
           Utils.wrap_forked_child do
-            while Time.now < deadline
+            while Mongo::Utils.monotonic_time < deadline
               client.database.command(hello: 1).should be_a(Mongo::Operation::Result)
             end
           end
         end
       end
 
-      while Time.now < deadline
+      while Mongo::Utils.monotonic_time < deadline
         # Use a read which is retried in case of an error
         client['foo'].find(test: 1).to_a
       end
@@ -51,7 +51,8 @@ describe 'fork reconnect' do
       end
     end
 
-    context 'when parent is operating on client during the fork', retry: 3 do
+    retry_test
+    context 'when parent is operating on client during the fork' do
       # This test intermittently fails in evergreen with pool size of 5,
       # with a number of pending connections in the pool.
       # The reason could be that handshaking is slow or operations are slow
@@ -59,7 +60,7 @@ describe 'fork reconnect' do
       # Sometimes it seems the monitoring connection experiences network
       # errors (despite being a loopback connection) which causes the test
       # to fail as then server selection fails.
-      # The retry: 3 is to deal with network errors on monitoring connection.
+      # The retry_test is to deal with network errors on monitoring connection.
 
       let(:client) { authorized_client.with(max_pool_size: 10,
         wait_queue_timeout: 10, socket_timeout: 2, connect_timeout: 2) }
@@ -77,20 +78,20 @@ describe 'fork reconnect' do
         end
 
         pids = []
-        deadline = Time.now + 5
+        deadline = Mongo::Utils.monotonic_time + 5
         10.times do
           if pid = fork
             pids << pid
           else
             Utils.wrap_forked_child do
-              while Time.now < deadline
+              while Mongo::Utils.monotonic_time < deadline
                 client.database.command(hello: 1).should be_a(Mongo::Operation::Result)
               end
             end
           end
         end
 
-        while Time.now < deadline
+        while Mongo::Utils.monotonic_time < deadline
           sleep 0.1
         end
 
@@ -102,7 +103,6 @@ describe 'fork reconnect' do
           status.exitstatus.should == 0
         end
       end
-
     end
   end
 end

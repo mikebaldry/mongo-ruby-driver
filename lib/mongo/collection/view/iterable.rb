@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2014-2020 MongoDB Inc.
 #
@@ -162,6 +162,7 @@ module Mongo
             let: options[:let],
             limit: limit,
             allow_disk_use: options[:allow_disk_use],
+            allow_partial_results: options[:allow_partial_results],
             read: read,
             read_concern: options[:read_concern] || read_concern,
             batch_size: batch_size,
@@ -170,6 +171,7 @@ module Mongo
             max_time_ms: options[:max_time_ms],
             max_value: options[:max_value],
             min_value: options[:min_value],
+            no_cursor_timeout: options[:no_cursor_timeout],
             return_key: options[:return_key],
             show_disk_loc: options[:show_disk_loc],
             comment: options[:comment],
@@ -183,6 +185,8 @@ module Mongo
           if spec[:oplog_replay]
             collection.client.log_warn("The :oplog_replay option is deprecated and ignored by MongoDB 4.4 and later")
           end
+
+          maybe_set_tailable_options(spec)
 
           if explained?
             spec[:explain] = options[:explain]
@@ -198,6 +202,19 @@ module Mongo
 
         def use_query_cache?
           QueryCache.enabled? && !collection.system_collection?
+        end
+
+        # Add tailable cusror options to the command specifiction if needed.
+        #
+        # @param [ Hash ] spec The command specification.
+        def maybe_set_tailable_options(spec)
+          case cursor_type
+          when :tailable
+            spec[:tailable] = true
+          when :tailable_await
+            spec[:tailable] = true
+            spec[:await_data] = true
+          end
         end
       end
     end

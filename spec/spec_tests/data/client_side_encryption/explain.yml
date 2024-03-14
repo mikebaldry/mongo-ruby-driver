@@ -1,5 +1,5 @@
 runOn:
-  - minServerVersion: "4.1.10"
+  - minServerVersion: "7.0.0"
 database_name: &database_name "default"
 collection_name: &collection_name "default"
 
@@ -33,19 +33,12 @@ tests:
             filter:
               name: *collection_name
           command_name: listCollections
-      - command_started_event:
-          command:
-            listCollections: 1
-            filter:
-              name: "datakeys"
-            $db: admin
-          command_name: listCollections
       # Then key is fetched from the key vault.
       - command_started_event:
           command:
             find: datakeys
             filter: {"$or": [{"_id": {"$in": [ {'$binary': {'base64': 'AAAAAAAAAAAAAAAAAAAAAA==', 'subType': '04'}} ] }}, {"keyAltNames": {"$in": []}}]}
-            $db: admin
+            $db: keyvault
             readConcern: { level: "majority" }
           command_name: find
       - command_started_event:

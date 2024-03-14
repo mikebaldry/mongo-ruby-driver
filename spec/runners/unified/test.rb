@@ -1,24 +1,32 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'runners/crud/requirement'
+require 'runners/unified/client_side_encryption_operations'
 require 'runners/unified/crud_operations'
 require 'runners/unified/grid_fs_operations'
 require 'runners/unified/ddl_operations'
 require 'runners/unified/change_stream_operations'
 require 'runners/unified/support_operations'
+require 'runners/unified/thread_operations'
+require 'runners/unified/search_index_operations'
 require 'runners/unified/assertions'
 require 'support/utils'
+require 'support/crypt'
 
 module Unified
 
   class Test
+    include ClientSideEncryptionOperations
     include CrudOperations
     include GridFsOperations
     include DdlOperations
     include ChangeStreamOperations
     include SupportOperations
+    include ThreadOperations
+    include SearchIndexOperations
     include Assertions
+    include RSpec::Core::Pending
 
     def initialize(spec, **opts)
       @spec = spec
@@ -42,6 +50,7 @@ module Unified
       @multiple_mongoses = mongoses.any? { |v| v }
       @test_spec.freeze
       @subscribers = {}
+      @observe_sensitive = {}
       @options = opts
     end
 
@@ -51,6 +60,10 @@ module Unified
     attr_reader :skip_reason
     attr_reader :reqs, :group_reqs
     attr_reader :options
+
+    def retry?
+      @description =~ /KMS/i
+    end
 
     def skip?
       !!@skip_reason
@@ -66,8 +79,13 @@ module Unified
 
     attr_reader :entities
 
-    def create_entities
-      @spec['createEntities'].each do |entity_spec|
+    def create_spec_entities
+      return if @entities_created
+      generate_entities(@spec['createEntities'])
+    end
+
+    def generate_entities(es)
+      es.each do |entity_spec|
         unless entity_spec.keys.length == 1
           raise NotImplementedError, "Entity must have exactly one key"
         end
@@ -84,6 +102,13 @@ module Unified
             opts = {}
           end
 
+          # max_pool_size gets automatically set to 3 if not explicitly set by
+          # the test, therefore, if min_pool_size is set, make sure to set the
+          # max_pool_size as well to something greater.
+          if !opts.key?('max_pool_size') && min_pool_size = opts[:min_pool_size]
+            opts[:max_pool_size] = min_pool_size + 3
+          end
+
           if spec.use('useMultipleMongoses')
             if ClusterConfig.instance.topology == :sharded
               unless SpecConfig.instance.addresses.length > 1
@@ -97,7 +122,7 @@ module Unified
             # the other set members, in standalone deployments because
             # there is only one server, but changes behavior in
             # sharded clusters compared to how the test suite is configured.
-            opts[:single_address] = true
+            options[:single_address] = true
           end
 
           if store_events = spec.use('storeEventsAsEntities')
@@ -105,8 +130,6 @@ module Unified
             store_events.each do |spec|
               entity_name = spec['id']
               event_names = spec['events']
-              #event_name = event_name.gsub(/Event$/, '').gsub(/[A-Z]/) { |m| "_#{m}" }.upcase
-              #event_name = event_name.gsub(/Event$/, '').sub(/./) { |m| m.upcase }
               event_names.each do |event_name|
                 store_event_names[event_name] = entity_name
               end
@@ -130,13 +153,15 @@ module Unified
             opts[:server_api] = server_api
           end
 
-          create_client(**opts).tap do |client|
-            @observe_sensitive = spec.use('observeSensitiveCommands')
-            if oe = spec.use('observeEvents')
+          observe_events = spec.use('observeEvents')
+          subscriber = EventSubscriber.new
+          current_proc = opts[:sdam_proc]
+          opts[:sdam_proc] = lambda do |client|
+            current_proc.call(client) if current_proc
+            if oe = observe_events
               oe.each do |event|
                 case event
                 when 'commandStartedEvent', 'commandSucceededEvent', 'commandFailedEvent'
-                  subscriber = (@subscribers[client] ||= EventSubscriber.new)
                   unless client.send(:monitoring).subscribers[Mongo::Monitoring::COMMAND].include?(subscriber)
                     client.subscribe(Mongo::Monitoring::COMMAND, subscriber)
                   end
@@ -146,17 +171,27 @@ module Unified
                     subscriber.ignore_commands(ignore_events)
                   end
                 when /\A(?:pool|connection)/
-                  subscriber = (@subscribers[client] ||= EventSubscriber.new)
                   unless client.send(:monitoring).subscribers[Mongo::Monitoring::CONNECTION_POOL]&.include?(subscriber)
                     client.subscribe(Mongo::Monitoring::CONNECTION_POOL, subscriber)
                   end
                   kind = event.sub('Event', '').gsub(/([A-Z])/) { "_#{$1}" }.sub('pool', 'Pool').downcase.to_sym
+                  subscriber.add_wanted_events(kind)
+                when 'serverDescriptionChangedEvent'
+                  unless client.send(:monitoring).subscribers[Mongo::Monitoring::SERVER_DESCRIPTION_CHANGED]&.include?(subscriber)
+                    client.subscribe(Mongo::Monitoring::SERVER_DESCRIPTION_CHANGED, subscriber)
+                  end
+                  kind = event.sub('Event', '').gsub(/([A-Z])/) { "_#{$1}" }.downcase.to_sym
                   subscriber.add_wanted_events(kind)
                 else
                   raise NotImplementedError, "Unknown event #{event}"
                 end
               end
             end
+          end
+
+          create_client(**opts).tap do |client|
+            @observe_sensitive[id] = spec.use('observeSensitiveCommands')
+            @subscribers[client] ||= subscriber
           end
         when 'database'
           client = entities.get(:client, spec.use!('client'))
@@ -192,7 +227,86 @@ module Unified
             opts = {}
           end
 
-          client.start_session(**opts)
+          client.start_session(**opts).tap do |session|
+            session.advance_cluster_time(@cluster_time)
+          end
+        when 'clientEncryption'
+          client_encryption_opts = spec.use!('clientEncryptionOpts')
+          key_vault_client = entities.get(:client, client_encryption_opts['keyVaultClient'])
+          opts = {
+            key_vault_namespace: client_encryption_opts['keyVaultNamespace'],
+            kms_providers: Utils.snakeize_hash(client_encryption_opts['kmsProviders']),
+            kms_tls_options: {
+              kmip: {
+                ssl_cert: SpecConfig.instance.fle_kmip_tls_certificate_key_file,
+                ssl_key: SpecConfig.instance.fle_kmip_tls_certificate_key_file,
+                ssl_ca_cert: SpecConfig.instance.fle_kmip_tls_ca_file
+              }
+            }
+          }
+          opts[:kms_providers] = opts[:kms_providers].map do |provider, options|
+            converted_options = options.map do |key, value|
+              converted_value = if value == { '$$placeholder'.to_sym => 1 }
+                case provider
+                when :aws
+                  case key
+                  when :access_key_id then SpecConfig.instance.fle_aws_key
+                  when :secret_access_key then SpecConfig.instance.fle_aws_secret
+                  end
+                when :azure
+                  case key
+                  when :tenant_id then SpecConfig.instance.fle_azure_tenant_id
+                  when :client_id then SpecConfig.instance.fle_azure_client_id
+                  when :client_secret then SpecConfig.instance.fle_azure_client_secret
+                  end
+                when :gcp
+                  case key
+                  when :email then SpecConfig.instance.fle_gcp_email
+                  when :private_key then SpecConfig.instance.fle_gcp_private_key
+                  end
+                when :kmip
+                  case key
+                  when :endpoint then SpecConfig.instance.fle_kmip_endpoint
+                  end
+                when :local
+                  case key
+                  when :key then Crypt::LOCAL_MASTER_KEY
+                  end
+                end
+              else
+                value
+              end
+              [key, converted_value]
+            end.to_h
+            [provider, converted_options]
+          end.to_h
+
+          Mongo::ClientEncryption.new(
+            key_vault_client,
+            opts
+          )
+        when 'thread'
+          thread_context = ThreadContext.new
+          thread = Thread.new do
+            loop do
+              begin
+                op_spec = thread_context.operations.pop(true)
+                execute_operation(op_spec)
+              rescue ThreadError
+                # Queue is empty
+              end
+              if thread_context.stop?
+                break
+              else
+                sleep 0.1
+              end
+            end
+          end
+          class << thread
+            attr_accessor :context
+          end
+          thread.context = thread_context
+          thread
         else
           raise NotImplementedError, "Unknown type #{type}"
         end
@@ -201,6 +315,7 @@ module Unified
         end
         entities.set(type.to_sym, id, entity)
       end
+      @entities_created = true
     end
 
     def set_initial_data
@@ -209,26 +324,31 @@ module Unified
         collection = root_authorized_client.with(write_concern: {w: :majority}).
           use(spec.use!('databaseName'))[spec.use!('collectionName')]
         collection.drop
+        create_options = spec.use('createOptions') || {}
         docs = spec.use!('documents')
+        begin
+          collection.create(create_options)
+        rescue Mongo::Error => e
+          if Mongo::Error::OperationFailure === e && (
+              e.code == 48 || e.message =~ /collection already exists/
+          )
+            # Already exists
+          else
+            raise
+          end
+        end
         if docs.any?
           collection.insert_many(docs)
-        else
-          begin
-            collection.create
-          rescue Mongo::Error => e
-            if Mongo::Error::OperationFailure === e && (
-              e.code == 48 || e.message =~ /collection already exists/
-            )
-              # Already exists
-            else
-              raise
-            end
-          end
         end
         unless spec.empty?
           raise NotImplementedError, "Unhandled spec keys: #{spec}"
         end
       end
+
+      # the cluster time is used to advance the cluster time of any
+      # sessions created during this test.
+      # -> see DRIVERS-2816
+      @cluster_time = root_authorized_client.command(ping: 1).cluster_time
     end
 
     def run
@@ -278,10 +398,19 @@ module Unified
         if name.to_s == 'loop'
           method_name = "_#{name}"
         end
+
+        if ["modify_collection", "list_index_names"].include?(name.to_s)
+          skip "Mongo Ruby Driver does not support #{name.to_s}"
+        end
+
         if expected_error = op.use('expectError')
           begin
+            unless respond_to?(method_name)
+              raise Error::UnsupportedOperation, "Mongo Ruby Driver does not support #{name.to_s}"
+            end
+
             public_send(method_name, op)
-          rescue Mongo::Error, BSON::String::IllegalKey => e
+          rescue Mongo::Error, bson_error, Mongo::Auth::Unauthorized, ArgumentError => e
             if expected_error.use('isClientError')
               # isClientError doesn't actually mean a client error.
               # It means anything other than OperationFailure. DRIVERS-1799
@@ -318,9 +447,11 @@ module Unified
                 end
               end
             end
+            if error_response = expected_error.use("errorResponse")
+              assert_result_matches(e.document, error_response)
+            end
             if expected_result = expected_error.use('expectResult')
               assert_result_matches(e.result, expected_result)
-              #expected_result.clear
             # Important: this must be the last branch.
             elsif expected_error.use('isError')
               # Nothing but we consume the key.
@@ -331,11 +462,27 @@ module Unified
           else
             raise Error::ErrorMismatch, "Expected exception but none was raised"
           end
+        elsif op.use('ignoreResultAndError')
+          unless respond_to?(method_name)
+            raise Error::UnsupportedOperation, "Mongo Ruby Driver does not support #{name.to_s}"
+          end
+
+          begin
+            send(method_name, op)
+          # We can possibly rescue more errors here, add as needed.
+          rescue Mongo::Error
+          end
         else
+          unless respond_to?(method_name, true)
+            raise Error::UnsupportedOperation, "Mongo Ruby Driver does not support #{name.to_s}"
+          end
+
           result = send(method_name, op)
           if expected_result = op.use('expectResult')
-            if result.nil? && !expected_result.empty?
-              raise Error::ResultMismatch, "Actual result nil but expected result #{expected_result}"
+            if result.nil? && expected_result.keys == ["$$unsetOrMatches"]
+              return
+            elsif result.nil? && !expected_result.empty?
+              raise Error::ResultMismatch, "#{msg}: expected #{expected} but got nil"
             elsif Array === expected_result
               assert_documents_match(result, expected_result)
             else
@@ -433,6 +580,15 @@ module Unified
         max_write_retries: 0,
       ).update(opts)
       Mongo::Client.new(*args)
+    end
+
+    # The error to rescue BSON tests for. If we still define
+    # BSON::String::IllegalKey then we should rescue that particular error,
+    # otherwise, rescue an arbitrary BSON::Error
+    def bson_error
+      BSON::String.const_defined?(:IllegalKey) ?
+        BSON::String.const_get(:IllegalKey) :
+        BSON::Error
     end
   end
 end

@@ -27,6 +27,7 @@ MRSS_ROOT=`dirname "$0"`/../spec/shared
 . $MRSS_ROOT/shlib/distro.sh
 . $MRSS_ROOT/shlib/set_env.sh
 . $MRSS_ROOT/shlib/server.sh
+. $MRSS_ROOT/shlib/config.sh
 . `dirname "$0"`/functions.sh
 . `dirname "$0"`/functions-aws.sh
 . `dirname "$0"`/functions-config.sh
@@ -37,17 +38,30 @@ show_local_instructions
 
 set_home
 set_env_vars
+set_env_python
 set_env_ruby
 
 prepare_server $arch
 
-install_mlaunch_virtualenv
+if test "$DOCKER_PRELOAD" != 1; then
+  install_mlaunch_venv
+fi
+
+# Make sure cmake is installed (in case we need to install the libmongocrypt
+# helper)
+if [ "$FLE" = "helper" ]; then
+  install_cmake
+fi
 
 # Launching mongod under $MONGO_ORCHESTRATION_HOME
 # makes its log available through log collecting machinery
 
 export dbdir="$MONGO_ORCHESTRATION_HOME"/db
 mkdir -p "$dbdir"
+
+if test -z "$TOPOLOGY"; then
+  export TOPOLOGY=standalone
+fi
 
 calculate_server_args
 launch_ocsp_mock
@@ -71,6 +85,11 @@ if test "$TOPOLOGY" = sharded-cluster; then
   else
     hosts=localhost:27017,localhost:27018
   fi
+elif test "$TOPOLOGY" = replica-set; then
+  # To set FCV we use mongo shell, it needs to be placed in replica set topology
+  # or it can try to send the commands to secondaries.
+  hosts=localhost:27017,localhost:27018
+  uri_options="$uri_options&replicaSet=test-rs"
 else
   hosts=localhost:27017
 fi
@@ -141,35 +160,91 @@ elif test "$AUTH" = aws-ecs; then
   fi
 
   ruby -Ilib -I.evergreen/lib -rserver_setup -e ServerSetup.new.setup_aws_auth
+elif test "$AUTH" = aws-web-identity; then
+  clear_instance_profile
+
+  ruby -Ilib -I.evergreen/lib -rserver_setup -e ServerSetup.new.setup_aws_auth
 elif test "$AUTH" = kerberos; then
   export MONGO_RUBY_DRIVER_KERBEROS=1
 fi
 
 if test -n "$FLE"; then
+  # Downloading crypt shared lib
+  if [ -z "$MONGO_CRYPT_SHARED_DOWNLOAD_URL" ]; then
+    crypt_shared_version=${CRYPT_SHARED_VERSION:-$("${BINDIR}"/mongod --version | grep -oP 'db version v\K.*')}
+    python3 -u .evergreen/mongodl.py --component crypt_shared -V ${crypt_shared_version} --out $(pwd)/csfle_lib  --target $(host_distro) || true
+    if test -f $(pwd)/csfle_lib/lib/mongo_crypt_v1.so
+    then
+      export MONGO_RUBY_DRIVER_CRYPT_SHARED_LIB_PATH=$(pwd)/csfle_lib/lib/mongo_crypt_v1.so
+    else
+      echo 'Could not find crypt_shared library'
+    fi
+  else
+    echo "Downloading crypt_shared package from $MONGO_CRYPT_SHARED_DOWNLOAD_URL"
+    mkdir -p $(pwd)/csfle_lib
+    cd $(pwd)/csfle_lib
+    curl --retry 3 -fL $MONGO_CRYPT_SHARED_DOWNLOAD_URL | tar zxf -
+    export MONGO_RUBY_DRIVER_CRYPT_SHARED_LIB_PATH=$(pwd)/lib/mongo_crypt_v1.so
+    cd -
+  fi
+
   # Start the KMS servers first so that they are launching while we are
   # fetching libmongocrypt.
   if test "$DOCKER_PRELOAD" != 1; then
     # We already have a virtualenv activated for mlaunch,
     # install kms dependencies into it.
     #. .evergreen/csfle/activate_venv.sh
-    
+
     # Adjusted package versions:
     # cryptography 3.4 requires rust, see
     # https://github.com/pyca/cryptography/issues/5771.
     #pip install boto3~=1.19 cryptography~=3.4.8 pykmip~=0.10.0
-    pip3 install boto3~=1.19 'cryptography<3.4' pykmip~=0.10.0
+    pip3 install boto3~=1.19 'cryptography<3.4' pykmip~=0.10.0 'sqlalchemy<2.0.0'
   fi
   python3 -u .evergreen/csfle/kms_http_server.py --ca_file .evergreen/x509gen/ca.pem --cert_file .evergreen/x509gen/server.pem --port 7999 &
   python3 -u .evergreen/csfle/kms_http_server.py --ca_file .evergreen/x509gen/ca.pem --cert_file .evergreen/x509gen/expired.pem --port 8000 &
   python3 -u .evergreen/csfle/kms_http_server.py --ca_file .evergreen/x509gen/ca.pem --cert_file .evergreen/x509gen/wrong-host.pem --port 8001 &
   python3 -u .evergreen/csfle/kms_http_server.py --ca_file .evergreen/x509gen/ca.pem --cert_file .evergreen/x509gen/server.pem --port 8002 --require_client_cert &
   python3 -u .evergreen/csfle/kms_kmip_server.py &
-  
-  curl --retry 3 -fLo libmongocrypt-all.tar.gz "https://s3.amazonaws.com/mciuploads/libmongocrypt/all/master/latest/libmongocrypt-all.tar.gz"
-  tar xf libmongocrypt-all.tar.gz
+  python3 -u .evergreen/csfle/fake_azure.py &
 
-  export LIBMONGOCRYPT_PATH=`pwd`/rhel-70-64-bit/nocrypto/lib64/libmongocrypt.so
-  test -f "$LIBMONGOCRYPT_PATH"
+  # Obtain temporary AWS credentials
+  PYTHON=python3 . .evergreen/csfle/set-temp-creds.sh
+
+  if test "$FLE" = helper; then
+    echo "Using helper gem"
+  elif test "$FLE" = path; then
+    if false; then
+      # We would ideally like to use the actual libmongocrypt binary here,
+      # however there isn't a straightforward way to obtain a binary that
+      # 1) is of a release version and 2) doesn't contain crypto.
+      # These could be theoretically spelunked out of libmongocrypt's
+      # evergreen tasks.
+      curl --retry 3 -fLo libmongocrypt-all.tar.gz "https://s3.amazonaws.com/mciuploads/libmongocrypt/all/master/latest/libmongocrypt-all.tar.gz"
+      tar xf libmongocrypt-all.tar.gz
+
+      export LIBMONGOCRYPT_PATH=`pwd`/rhel-70-64-bit/nocrypto/lib64/libmongocrypt.so
+    else
+      # So, install the helper for the binary.
+      gem install libmongocrypt-helper --pre
+
+      # https://stackoverflow.com/questions/19072070/how-to-find-where-gem-files-are-installed
+      path=$(find `gem env |grep INSTALLATION |awk -F: '{print $2}'` -name libmongocrypt.so |head -1 || true)
+      if test -z "$path"; then
+        echo Failed to find libmongocrypt.so in installed gems 1>&2
+        exit 1
+      fi
+      cp $path .
+      export LIBMONGOCRYPT_PATH=`pwd`/libmongocrypt.so
+
+      gem uni libmongocrypt-helper
+    fi
+    test -f "$LIBMONGOCRYPT_PATH"
+    ldd "$LIBMONGOCRYPT_PATH"
+  else
+    echo "Unknown FLE value: $FLE" 1>&2
+    exit 1
+  fi
 
   echo "Waiting for mock KMS servers to start..."
    wait_for_kms_server() {
@@ -187,6 +262,7 @@ if test -n "$FLE"; then
    wait_for_kms_server 8001
    wait_for_kms_server 8002
    wait_for_kms_server 5698
+   wait_for_kms_server 8080
    echo "Waiting for mock KMS servers to start... done."
 fi
 
@@ -286,7 +362,7 @@ if test -n "$OCSP_MOCK_PID"; then
   kill "$OCSP_MOCK_PID"
 fi
 
-python2 -m mtools.mlaunch.mlaunch stop --dir "$dbdir"
+python3 -m mtools.mlaunch.mlaunch stop --dir "$dbdir"
 
 if test -n "$FLE" && test "$DOCKER_PRELOAD" != 1; then
   # Terminate all kmip servers... and whatever else happens to be running

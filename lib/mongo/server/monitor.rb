@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2014-2020 MongoDB Inc.
 #
@@ -170,6 +170,25 @@ module Mongo
         end
       end
 
+      def create_push_monitor!(topology_version)
+        @update_mutex.synchronize do
+          if @push_monitor && !@push_monitor.running?
+            @push_monitor = nil
+          end
+
+          @push_monitor ||= PushMonitor.new(
+            self,
+            topology_version,
+            monitoring,
+            **Utils.shallow_symbolize_keys(options.merge(
+              socket_timeout: heartbeat_interval + connection.socket_timeout,
+              app_metadata: options[:push_monitor_app_metadata],
+              check_document: @connection.check_document
+            )),
+          )
+        end
+      end
+
       def stop_push_monitor!
         @update_mutex.synchronize do
           if @push_monitor
@@ -204,13 +223,17 @@ module Mongo
         @mutex.synchronize do
           throttle_scan_frequency!
 
-          result = do_scan
-
-          run_sdam_flow(result)
+          begin
+            result = do_scan
+          rescue => e
+            run_sdam_flow({}, scan_error: e)
+          else
+            run_sdam_flow(result)
+          end
         end
       end
 
-      def run_sdam_flow(result, awaited: false)
+      def run_sdam_flow(result, awaited: false, scan_error: nil)
         @sdam_mutex.synchronize do
           old_description = server.description
 
@@ -218,7 +241,7 @@ module Mongo
             average_round_trip_time: server.round_trip_time_averager.average_round_trip_time
           )
 
-          server.cluster.run_sdam_flow(server.description, new_description, awaited: awaited)
+          server.cluster.run_sdam_flow(server.description, new_description, awaited: awaited, scan_error: scan_error)
 
           server.description.tap do |new_description|
             unless awaited
@@ -249,6 +272,10 @@ module Mongo
         end
       end
 
+      def to_s
+        "#<#{self.class.name}:#{object_id} #{server.address}>"
+      end
+
       private
 
       def pre_stop
@@ -267,7 +294,7 @@ module Mongo
             log_prefix: options[:log_prefix],
             bg_error_backtrace: options[:bg_error_backtrace],
           )
-          {}
+          raise exc
         end
       end
 
@@ -300,20 +327,9 @@ module Mongo
             connection.handshake!
           end
           @connection = connection
-          if result['topologyVersion']
+          if tv_doc = result['topologyVersion']
             # Successful response, server 4.4+
-            @update_mutex.synchronize do
-              @push_monitor ||= PushMonitor.new(
-                self,
-                TopologyVersion.new(result['topologyVersion']),
-                monitoring,
-                **Utils.shallow_symbolize_keys(options.merge(
-                  socket_timeout: heartbeat_interval + connection.socket_timeout,
-                  app_metadata: options[:push_monitor_app_metadata],
-                  check_document: @connection.check_document
-                )),
-              )
-            end
+            create_push_monitor!(TopologyVersion.new(tv_doc))
             push_monitor.run!
           else
             # Failed response or pre-4.4 server

@@ -1,16 +1,14 @@
 # frozen_string_literal: true
-# encoding: utf-8
 
+# rubocop:disable Metrics/AbcSize, Metrics/MethodLength, Metrics/BlockLength
 def standard_dependencies
-  gem 'yard'
+  gem 'yard', '>= 0.9.35'
   gem 'ffi'
 
   group :development, :testing do
     gem 'jruby-openssl', platforms: :jruby
     gem 'json', platforms: :jruby
-    # Explicitly specify each rspec dependency so that we can use
-    # rspec-mocks-diag instead of rspec-mocks
-    gem 'rspec-core', '~> 3.9'
+    gem 'rspec', '~> 3.12'
     gem 'activesupport', '<7.1'
     gem 'rake'
     gem 'webrick'
@@ -23,11 +21,21 @@ def standard_dependencies
     gem 'aws-sdk-ec2'
     gem 'aws-sdk-ecs'
     gem 'aws-sdk-iam'
+    gem 'aws-sdk-sts'
     gem 'paint'
 
     # for benchmark tests
     gem 'yajl-ruby', platforms: :mri, require: false
     gem 'celluloid', platforms: :mri, require: false
+
+    # for static analysis -- ignore ruby < 2.6 because of rubocop
+    # version incompatibilities
+    if RUBY_VERSION > '2.5.99'
+      gem 'rubocop', '~> 1.45.1'
+      gem 'rubocop-performance', '~> 1.16.0'
+      gem 'rubocop-rake', '~> 0.6.0'
+      gem 'rubocop-rspec', '~> 2.18.1'
+    end
 
     platform :mri do
       # Debugger for VSCode.
@@ -43,8 +51,6 @@ def standard_dependencies
     gem 'ice_nine'
     gem 'rubydns', platforms: :mri
     gem 'rspec-retry'
-    gem 'rspec-expectations', '~> 3.9'
-    gem 'rspec-mocks-diag', '~> 3.9'
     gem 'rfc', '~> 0.2.0'
     gem 'fuubar'
     gem 'timeout-interrupt', platforms: :mri
@@ -57,5 +63,10 @@ def standard_dependencies
     gem 'ruby-prof', platforms: :mri
     gem 'erubi'
     gem 'tilt'
+    # solargraph depends on rbs, which won't build on jruby for some reason
+    gem 'solargraph', platforms: :mri
   end
+
+  gem 'libmongocrypt-helper', '~> 1.8.0' if ENV['FLE'] == 'helper'
 end
+# rubocop:enable Metrics/AbcSize, Metrics/MethodLength, Metrics/BlockLength

@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'spec_helper'
 
@@ -15,7 +15,7 @@ describe 'Client-Side Encryption' do
 
     let(:key_vault_client) do
       client.with(
-        database: 'admin',
+        database: 'keyvault',
         write_concern: { w: :majority }
       )['datakeys']
     end
@@ -58,7 +58,7 @@ describe 'Client-Side Encryption' do
                 ssl_key: SpecConfig.instance.fle_kmip_tls_certificate_key_file,
               }
             },
-            key_vault_namespace: 'admin.datakeys',
+            key_vault_namespace: 'keyvault.datakeys',
             schema_map: local_schema_map,
             # Spawn mongocryptd on non-default port for sharded cluster tests
             extra_options: extra_options,
@@ -98,7 +98,7 @@ describe 'Client-Side Encryption' do
               ssl_key: SpecConfig.instance.fle_kmip_tls_certificate_key_file,
             }
           },
-          key_vault_namespace: 'admin.datakeys',
+          key_vault_namespace: 'keyvault.datakeys',
         },
       )
     end
@@ -179,13 +179,22 @@ describe 'Client-Side Encryption' do
     before do
       client.use('db')['coll'].drop
 
-      key_vault_collection = client.use('admin')['datakeys', write_concern: { w: :majority }]
+      key_vault_collection = client.use('keyvault')['datakeys', write_concern: { w: :majority }]
       key_vault_collection.drop
       key_vault_collection.insert_one(local_data_key)
       key_vault_collection.insert_one(aws_data_key)
       key_vault_collection.insert_one(azure_data_key)
       key_vault_collection.insert_one(gcp_data_key)
       key_vault_collection.insert_one(kmip_data_key)
+    end
+
+    # This method compensates for an API change between BSON 4 and
+    # BSON 5.
+    def normalize_cse_value(a)
+      case a
+      when BSON::Decimal128 then a.to_d
+      else a
+      end
     end
 
     shared_context 'with jsonSchema collection validator' do
@@ -228,12 +237,11 @@ describe 'Client-Side Encryption' do
           .find(_id: corpus_encrypted_id)
           .first
 
-
         corpus_encrypted_actual.each do |key, value|
           # If it was deterministically encrypted, test the encrypted values
           # for equality.
           if value['algo'] == 'det'
-            expect(value['value']).to eq(corpus_encrypted_expected[key]['value'])
+            expect(normalize_cse_value(value['value'])).to eq(normalize_cse_value(corpus_encrypted_expected[key]['value']))
           else
             # If the document was randomly encrypted, the two encrypted values
             # will not be equal. Ensure that they are equal when decrypted.

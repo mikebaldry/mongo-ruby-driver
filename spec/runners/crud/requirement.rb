@@ -1,10 +1,10 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 module Mongo
   module CRUD
     class Requirement
-      YAML_KEYS = %w(auth minServerVersion maxServerVersion topology topologies serverParameters serverless).freeze
+      YAML_KEYS = %w(auth minServerVersion maxServerVersion topology topologies serverParameters serverless csfle).freeze
 
       def initialize(spec)
         spec = spec.dup
@@ -49,6 +49,7 @@ module Mongo
           nil
         end
         @auth = spec['auth']
+        @csfle = !!spec['csfle'] if spec['csfle']
       end
 
       attr_reader :min_server_version
@@ -75,11 +76,11 @@ module Mongo
       def satisfied?
         cc = ClusterConfig.instance
         ok = true
-        if short_min_server_version
-          ok &&= cc.fcv_ish >= short_min_server_version
+        if min_server_version
+          ok &&= Gem::Version.new(cc.fcv_ish) >= Gem::Version.new(min_server_version)
         end
         if max_server_version
-          ok &&= cc.short_server_version <= max_server_version
+          ok &&= Gem::Version.new(cc.server_version) <= Gem::Version.new(max_server_version)
         end
         if topologies
           ok &&= topologies.include?(cc.topology)
@@ -108,9 +109,13 @@ module Mongo
           end
         end
         if @auth == true
-          ok &&= cc.auth_enabled?
+          ok &&= SpecConfig.instance.auth?
         elsif @auth == false
-          ok &&= !cc.auth_enabled?
+          ok &&= !SpecConfig.instance.auth?
+        end
+        if @csfle
+          ok &&= !!(ENV['LIBMONGOCRYPT_PATH'] || ENV['FLE'])
+          ok &&= Gem::Version.new(cc.fcv_ish) >= Gem::Version.new('4.2.0')
         end
         ok
       end

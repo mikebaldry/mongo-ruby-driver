@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2015-2020 MongoDB Inc.
 #
@@ -70,20 +70,18 @@ module Mongo
         end
         combine_errors!(result)
         @count += count
+        @acknowledged = result.acknowledged?
       end
 
       # Get the final result.
       #
       # @api private
       #
-      # @example Get the final result.
-      #   combinator.result
-      #
       # @return [ BulkWrite::Result ] The final result.
       #
       # @since 2.1.0
       def result
-        BulkWrite::Result.new(results).validate!
+        BulkWrite::Result.new(results, @acknowledged).validate!
       end
 
       private

@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'spec_helper'
 
@@ -48,6 +48,7 @@ describe 'Step down behavior' do
 
   describe 'getMore iteration' do
     min_server_fcv '4.2'
+    require_no_linting
 
     let(:subscribed_client) do
       test_client.tap do |client|
@@ -66,8 +67,9 @@ describe 'Step down behavior' do
     let(:enum) { view.to_enum }
 
     it 'continues through step down' do
-
-      subscribed_client.cluster.next_primary.pool.clear
+      server = subscribed_client.cluster.next_primary
+      server.pool_internal.do_clear
+      server.pool_internal.ready
       subscriber.clear_events!
 
       # get the first item
@@ -134,10 +136,14 @@ describe 'Step down behavior' do
     end
 
     let(:fail_point) do
-      { configureFailPoint: 'failCommand', data: {
-        # There is currently no way to turn write retries on not master
-        # errors off - therefore set the number of fails to 2
-        failCommands: ['insert'], errorCode: fail_point_code, }, mode: {times: 2} }
+      {
+        configureFailPoint: 'failCommand',
+        data: {
+          failCommands: ['insert'],
+          errorCode: fail_point_code,
+        },
+        mode: { times: 1 }
+      }
     end
 
     before do
@@ -165,6 +171,10 @@ describe 'Step down behavior' do
         end.to raise_error(Mongo::Error::OperationFailure, /10107/)
 
         expect(subscriber.select_published_events(Mongo::Monitoring::Event::Cmap::PoolCleared).count).to eq(0)
+
+        expect do
+          collection.insert_one(test: 1)
+        end.to_not raise_error
       end
     end
 
@@ -184,6 +194,10 @@ describe 'Step down behavior' do
         end.to raise_error(Mongo::Error::OperationFailure, /10107/)
 
         expect(subscriber.select_published_events(Mongo::Monitoring::Event::Cmap::PoolCleared).count).to eq(1)
+
+        expect do
+          collection.insert_one(test: 1)
+        end.to_not raise_error
       end
     end
 
@@ -201,6 +215,10 @@ describe 'Step down behavior' do
         end.to raise_error(Mongo::Error::OperationFailure, /11600/)
 
         expect(subscriber.select_published_events(Mongo::Monitoring::Event::Cmap::PoolCleared).count).to eq(1)
+
+        expect do
+          collection.insert_one(test: 1)
+        end.to_not raise_error
       end
     end
   end

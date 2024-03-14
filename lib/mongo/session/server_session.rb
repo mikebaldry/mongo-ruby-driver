@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2017-2020 MongoDB Inc.
 #
@@ -15,6 +15,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+require 'mongo/session/server_session/dirtyable'
+
 module Mongo
 
   class Session
@@ -25,6 +27,7 @@ module Mongo
     #
     # @since 2.5.0
     class ServerSession
+      include Dirtyable
 
       # Regex for removing dashes from the UUID string.
       #

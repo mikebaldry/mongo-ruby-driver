@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2019-2020 MongoDB Inc.
 #
@@ -193,6 +193,7 @@ module Mongo
             command_failed(nil, address, operation_id, message.payload,
               e.message, total_duration,
               started_event: started_event,
+              server_connection_id: description.server_connection_id,
               service_id: description.service_id,
             )
             raise
@@ -201,6 +202,7 @@ module Mongo
             command_completed(result, address, operation_id, message.payload,
               total_duration,
               started_event: started_event,
+              server_connection_id: description.server_connection_id,
               service_id: description.service_id,
             )
           end

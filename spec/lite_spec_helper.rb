@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 $LOAD_PATH.unshift(File.join(File.dirname(__FILE__), "shared", "lib"))
 
@@ -10,15 +10,17 @@ SERVER_DISCOVERY_TESTS = Dir.glob("#{CURRENT_PATH}/spec_tests/data/sdam/**/*.yml
 SDAM_MONITORING_TESTS = Dir.glob("#{CURRENT_PATH}/spec_tests/data/sdam_monitoring/*.yml").sort
 SERVER_SELECTION_RTT_TESTS = Dir.glob("#{CURRENT_PATH}/spec_tests/data/server_selection_rtt/*.yml").sort
 CRUD_TESTS = Dir.glob("#{CURRENT_PATH}/spec_tests/data/crud/**/*.yml").sort
-CRUD2_TESTS = Dir.glob("#{CURRENT_PATH}/spec_tests/data/crud_v2/**/*.yml").sort
-COMMAND_MONITORING_TESTS = Dir.glob("#{CURRENT_PATH}/spec_tests/data/command_monitoring/**/*.yml").sort
 CONNECTION_STRING_TESTS = Dir.glob("#{CURRENT_PATH}/spec_tests/data/connection_string/*.yml").sort
 URI_OPTIONS_TESTS = Dir.glob("#{CURRENT_PATH}/spec_tests/data/uri_options/*.yml").sort
 GRIDFS_TESTS = Dir.glob("#{CURRENT_PATH}/spec_tests/data/gridfs/*.yml").sort
 TRANSACTIONS_TESTS = Dir.glob("#{CURRENT_PATH}/spec_tests/data/transactions/*.yml").sort
 TRANSACTIONS_API_TESTS = Dir.glob("#{CURRENT_PATH}/spec_tests/data/transactions_api/*.yml").sort
 CHANGE_STREAMS_TESTS = Dir.glob("#{CURRENT_PATH}/spec_tests/data/change_streams/*.yml").sort
-CMAP_TESTS = Dir.glob("#{CURRENT_PATH}/spec_tests/data/cmap/*.yml").sort
+CMAP_TESTS = Dir.glob("#{CURRENT_PATH}/spec_tests/data/cmap/*.yml").sort.select do |f|
+  # Skip tests that are flaky on JRuby.
+  # https://jira.mongodb.org/browse/RUBY-3292
+  !defined?(JRUBY_VERSION) || !f.include?('pool-checkout-minPoolSize-connection-maxConnecting.yml')
+end
 AUTH_TESTS = Dir.glob("#{CURRENT_PATH}/spec_tests/data/auth/*.yml").sort
 CLIENT_SIDE_ENCRYPTION_TESTS = Dir.glob("#{CURRENT_PATH}/spec_tests/data/client_side_encryption/*.yml").sort
 
@@ -34,7 +36,10 @@ else
   begin
     require 'byebug'
   rescue LoadError
-    require 'ruby-debug'
+    begin
+      require 'ruby-debug'
+    rescue LoadError
+    end
   end
 end
 
@@ -52,6 +57,8 @@ autoload :Benchmark, 'benchmark'
 autoload :IceNine, 'ice_nine'
 autoload :Timecop, 'timecop'
 autoload :ChildProcess, 'childprocess'
+
+require 'rspec/retry'
 
 if BSON::Environment.jruby?
   require 'concurrent-ruby'
@@ -80,6 +87,7 @@ require 'support/common_shortcuts'
 require 'support/client_registry'
 require 'support/client_registry_macros'
 require 'support/mongos_macros'
+require 'support/macros'
 require 'support/crypt'
 require 'support/json_ext_formatter'
 require 'support/sdam_formatter_integration'
@@ -87,7 +95,7 @@ require 'support/background_thread_registry'
 require 'mrss/session_registry'
 require 'support/local_resource_registry'
 
-if SpecConfig.instance.mri?
+if SpecConfig.instance.mri? && !SpecConfig.instance.windows?
   require 'timeout_interrupt'
 else
   require 'timeout'
@@ -98,12 +106,53 @@ Mrss.patch_mongo_for_session_registry
 
 class ExampleTimeout < StandardError; end
 
+STANDARD_TIMEOUTS = {
+  stress: 210,
+  jruby: 90,
+  default: 45,
+}.freeze
+
+def timeout_type
+  if ENV['EXAMPLE_TIMEOUT'].to_i > 0
+    :custom
+  elsif %w(1 true yes).include?(ENV['STRESS']&.downcase)
+    :stress
+  elsif BSON::Environment.jruby?
+    :jruby
+  else
+    :default
+  end
+end
+
+def example_timeout_seconds
+  STANDARD_TIMEOUTS.fetch(
+    timeout_type,
+    (ENV['EXAMPLE_TIMEOUT'] || STANDARD_TIMEOUTS[:default]).to_i
+  )
+end
+
 RSpec.configure do |config|
   config.extend(CommonShortcuts::ClassMethods)
   config.include(CommonShortcuts::InstanceMethods)
   config.extend(Mrss::LiteConstraints)
   config.include(ClientRegistryMacros)
   config.include(MongosMacros)
+  config.extend(Mongo::Macros)
+
+  # Used for spec/solo/*
+  def require_solo
+    before(:all) do
+      unless %w(1 true yes).include?(ENV['SOLO'])
+        skip 'Set SOLO=1 in environment to run solo tests'
+      end
+    end
+  end
+
+  def require_atlas
+    before do
+      skip 'Set ATLAS_URI in environment to run atlas tests' if ENV['ATLAS_URI'].nil?
+    end
+  end
 
   if SpecConfig.instance.ci?
     SdamFormatterIntegration.subscribe
@@ -123,16 +172,7 @@ RSpec.configure do |config|
     # Tests should take under 10 seconds ideally but it seems
     # we have some that run for more than 10 seconds in CI.
     config.around(:each) do |example|
-      timeout = if %w(1 true yes).include?(ENV['STRESS']&.downcase)
-        210
-      else
-        if BSON::Environment.jruby?
-          90
-        else
-          45
-        end
-      end
-      TimeoutInterrupt.timeout(timeout, ExampleTimeout) do
+      TimeoutInterrupt.timeout(example_timeout_seconds, ExampleTimeout) do
         example.run
       end
     end
